@@ -6,6 +6,7 @@
 *.asd  text eol=lf
 *.sexp text eol=lf
 *.md   text eol=lf
+*.lock text eol=lf
 
 # JSON fixtures are hashed. grounded-story-project.json has its sha256 pinned
 # in evals/results/, so a CRLF checkout changes the digest and the assertion

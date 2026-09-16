@@ -34,9 +34,19 @@ Authority is separated from suggestion. Models propose; typed kernel policy
 authorizes. Nothing a model says grants itself effects, providers,
 capabilities, or publication rights.
 
+Every prompt is a fresh projection: compaction and window limits are
+rendering concerns, not where truth lives. Beyond memory, motivation,
+disposition, and identity are projections too — the agent develops its own
+curiosities with stable identity and satisfaction receipts, which mature
+into background cognition and work dockets, all structurally fenced from
+unilateral action.
+
 This is an architecture for agents that persist for months: that wake up
 knowing what mattered yesterday, that can be audited end to end, and that
 operate within explicit, enforceable bounds.
+
+For how this compares to Claude Code, Codex, Hermes, Exo, and the wider
+agent landscape, see [pAI in the Agent Landscape](docs/related-work.md).
 
 ## What exists today
 
@@ -60,6 +70,8 @@ operate within explicit, enforceable bounds.
   minds sharing storage without collapsing autobiographies — direct
   experience, inheritance, and communication rendered distinctly.
 - **Governed tools**: validated registry, observer stages, authority gates.
+- **Model-agnostic**: works with any OpenAI-compatible endpoint — local
+  (Ollama, LM Studio) or hosted (OpenRouter and others).
 - **Browser interface** and operator CLI.
 
 ## Status
@@ -107,17 +119,8 @@ guarantees, and price ceilings in these files are placeholders — verify them
 against the provider you select. The zero-price placeholders fail closed by
 design: nothing runs until you enter real values.
 
-For a new local instance, copy `config/instance.example.json` to the ignored
-`config/instance.json`, replace its placeholders, and run
-`python3 scripts/pai_instance.py --config config/instance.json`. Instance
-settings live in that JSON file; credentials remain outside it. See
-[development setup](docs/development.md) for the empty-state and restart
-contract.
-
 ## License and contributions
 
 The source is licensed under [MIT](LICENSE). The project is maintained by
 its original author and is not accepting pull requests at this time.
-See [third-party notices](THIRD_PARTY_NOTICES.md),
-[source provenance](docs/source-provenance.md), [contributing](CONTRIBUTING.md),
-and the [security policy](SECURITY.md).
+Dependency and provenance review is still in progress.

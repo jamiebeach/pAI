@@ -23,6 +23,7 @@ from pai_cli import (  # noqa: E402
     export_event_ledger,
     memory_migration_environment,
     parse_args,
+    validate_agent_id,
     validate_embedding_endpoint,
     verify_state_backup,
     web_environment,

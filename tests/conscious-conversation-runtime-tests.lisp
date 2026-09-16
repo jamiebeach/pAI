@@ -1147,6 +1147,61 @@
                             "status"
                             *conscious-conversation-last-accounting-anomaly*)))))
 
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" t "effort" "medium")
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-private-provider-call-p* t)
+       (*conscious-conversation-private-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-pending-generation-settlements* nil)
+       (*conscious-conversation-last-accounting-anomaly* nil)
+       (*conscious-conversation-openrouter-generation-lookup-fn*
+         (lambda (generation-id api-key)
+           (declare (ignore generation-id api-key))
+           nil))
+       (caught nil))
+  (handler-case
+      (%conversation-http-model-call
+       (list (obj "role" "user" "content" "unsettled generation fixture"))
+       "https://openrouter.ai/api/v1/chat/completions"
+       "xiaomi/mimo-v2.5" 0.3d0
+       :transport-fn
+       (lambda (&rest ignored)
+         (declare (ignore ignored))
+         (%conversation-provider-progress-observe
+          "gen-never-settles-789" 12 1000 600 200 0)
+         (error "fixture stream interrupted")))
+    (error (condition) (setf caught condition)))
+  (let* ((pending
+           (first *conscious-conversation-pending-generation-settlements*))
+         (fallback (and pending (gethash "fallback_cost_usd" pending))))
+    (q45-check "unsettled generation retains a finite capacity fallback"
+               (and caught (realp fallback) (plusp fallback)
+                    *conscious-conversation-provider-budget-uncertain-p*))
+    (q45-check "later admission charges fallback and restores liveness"
+               (and (%conversation-openrouter-budget-ready-p)
+                    (= fallback *conscious-conversation-provider-spent-usd*)
+                    (= fallback
+                       *conscious-conversation-private-provider-spent-usd*)
+                    (null
+                     *conscious-conversation-pending-generation-settlements*)
+                    (not *conscious-conversation-provider-budget-uncertain-p*)
+                    (string= "generation-capacity-fallback"
+                             (gethash
+                              "status"
+                              *conscious-conversation-last-accounting-anomaly*))))))
+
 (when (and (fboundp 'conscious-conversation-history)
            (fboundp 'conscious-conversation-turn))
   (let* ((events
