@@ -8545,6 +8545,12 @@ the focus so replay and later attention can continue."
          *conscious-conversation-accounting-anomaly-count*
          "pending_generation_settlement_count"
          (length *conscious-conversation-pending-generation-settlements*)
+         "pending_generation_fallback_usd"
+         (loop for pending
+                 in *conscious-conversation-pending-generation-settlements*
+               for fallback = (gethash "fallback_cost_usd" pending)
+               when (realp fallback) sum fallback into total
+               finally (return (or total 0d0)))
          "most_recent_accounting_anomaly"
          (if (hash-table-p
               *conscious-conversation-most-recent-accounting-anomaly*)

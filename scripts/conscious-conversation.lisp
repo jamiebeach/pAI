@@ -1694,21 +1694,31 @@ metadata parser or asking the browser to understand runtime structures."
       value)))
 
 (defun %conversation-web-budget-text (report &optional prefix)
-  (format nil
-          "~@[~a~%~]Budget: $~,6f/$~,6f used ($~,6f remaining); ~d requests recorded for telemetry only.~%Private cost share (~d%): $~,6f/$~,6f used ($~,6f remaining); ~d private requests recorded for telemetry only.~@[ Accounting is uncertain; further provider calls are paused.~]~@[ Conservative accounting fallbacks: ~d.~]"
-          prefix
-          (gethash "spent_usd" report)
-          (gethash "cost_ceiling_usd" report)
-          (gethash "remaining_usd" report)
-          (gethash "request_attempts" report)
-          (gethash "private_budget_percent" report)
-          (gethash "private_spent_usd" report)
-          (gethash "private_cost_ceiling_usd" report)
-          (gethash "private_remaining_usd" report)
-          (gethash "private_request_attempts" report)
-          (gethash "accounting_uncertain" report)
-          (let ((count (gethash "accounting_anomaly_count" report 0)))
-            (and (plusp count) count))))
+  (let* ((pending
+           (gethash "pending_generation_settlement_count" report 0))
+         (pending-text
+           (and (plusp pending)
+                (format nil
+                        "Pending provider settlement: ~d generation~:p; $~,6f conservative fallback. Admission remains paused until exact accounting or fallback settlement."
+                        pending
+                        (gethash "pending_generation_fallback_usd"
+                                 report 0d0)))))
+    (format nil
+            "~@[~a~%~]Budget: $~,6f/$~,6f used ($~,6f remaining); ~d requests recorded for telemetry only.~%Private cost share (~d%): $~,6f/$~,6f used ($~,6f remaining); ~d private requests recorded for telemetry only.~@[ Accounting is uncertain; further provider calls are paused.~]~@[ Conservative accounting fallbacks: ~d.~]~@[~%~a~]"
+            prefix
+            (gethash "spent_usd" report)
+            (gethash "cost_ceiling_usd" report)
+            (gethash "remaining_usd" report)
+            (gethash "request_attempts" report)
+            (gethash "private_budget_percent" report)
+            (gethash "private_spent_usd" report)
+            (gethash "private_cost_ceiling_usd" report)
+            (gethash "private_remaining_usd" report)
+            (gethash "private_request_attempts" report)
+            (gethash "accounting_uncertain" report)
+            (let ((count (gethash "accounting_anomaly_count" report 0)))
+              (and (plusp count) count))
+            pending-text)))
 
 (defun %conversation-run-web-command (line)
   (unless (string= *conversation-loop-mode* "recursive")

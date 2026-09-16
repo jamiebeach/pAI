@@ -3074,7 +3074,9 @@
                        1d-12)
                     (< (abs (- 0.2d0
                                (gethash "private_remaining_usd" report)))
-                       1d-12)))))
+                       1d-12)
+                    (= 0d0
+                       (gethash "pending_generation_fallback_usd" report))))))
 (crm-check "operator cost top-up rejects a non-positive amount"
            (handler-case
                (progn (conscious-recursive-session-budget-add 0d0) nil)

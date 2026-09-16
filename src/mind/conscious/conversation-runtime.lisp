@@ -75,7 +75,7 @@ the active provider configuration relative to the pAI system.")
 (defvar *conscious-conversation-provider-spent-usd* 0d0)
 (defvar *conscious-conversation-provider-budget-uncertain-p* nil)
 (defvar *conscious-conversation-pending-generation-settlements* nil
-  "Content-free OpenRouter generation IDs awaiting authoritative cost.")
+  "Content-free OpenRouter generations awaiting exact cost or bounded fallback.")
 (defvar *conscious-conversation-last-accounting-anomaly* nil
   "Structured report for the current provider attempt when conservative
 accounting replaced missing or untrustworthy provider accounting.")
@@ -1970,6 +1970,14 @@ to use its conservative fallback."
           (gethash "charged_cost_usd" report) settled-cost
           (gethash "reported_cost_usd" report) settled-cost)))
 
+(defun %conversation-openrouter-update-capacity-fallback-report
+    (report generation-id fallback-cost)
+  (when (and (hash-table-p report)
+             (string= generation-id (gethash "generation_id" report "")))
+    (setf (gethash "status" report) "generation-capacity-fallback"
+          (gethash "charged_cost_usd" report) fallback-cost
+          (gethash "reported_cost_usd" report) :null)))
+
 (defun %conversation-openrouter-reconcile-pending-settlements ()
   "Settle any previously interrupted generations before admitting more work."
   (when *conscious-conversation-pending-generation-settlements*
@@ -1977,11 +1985,13 @@ to use its conservative fallback."
           (api-key (uiop:getenv "OPENROUTER_API_KEY")))
       (dolist (pending *conscious-conversation-pending-generation-settlements*)
         (let* ((generation-id (gethash "generation_id" pending))
+               (fallback-cost (gethash "fallback_cost_usd" pending))
                (settled-cost
                  (%conversation-openrouter-reconciled-generation-cost
                   generation-id api-key)))
-          (if (realp settled-cost)
-              (progn
+          (cond
+            ((realp settled-cost)
+             (progn
                 (incf *conscious-conversation-provider-spent-usd* settled-cost)
                 (when (gethash "private" pending)
                   (incf *conscious-conversation-private-provider-spent-usd*
@@ -1991,18 +2001,35 @@ to use its conservative fallback."
                  generation-id settled-cost)
                 (%conversation-openrouter-update-reconciled-report
                  *conscious-conversation-most-recent-accounting-anomaly*
-                 generation-id settled-cost))
-              (push pending remaining))))
+                 generation-id settled-cost)))
+            ((and (realp fallback-cost) (not (minusp fallback-cost)))
+             ;; Exact provider metadata remained unavailable after both the
+             ;; interrupted call's lookup and this later admission lookup.
+             ;; Charge the sealed full-capacity bound rather than freezing all
+             ;; cognition indefinitely or pretending the generation was free.
+             (incf *conscious-conversation-provider-spent-usd* fallback-cost)
+             (when (gethash "private" pending)
+               (incf *conscious-conversation-private-provider-spent-usd*
+                     fallback-cost))
+             (%conversation-openrouter-update-capacity-fallback-report
+              *conscious-conversation-last-accounting-anomaly*
+              generation-id fallback-cost)
+             (%conversation-openrouter-update-capacity-fallback-report
+              *conscious-conversation-most-recent-accounting-anomaly*
+              generation-id fallback-cost))
+            (t (push pending remaining)))))
       (setf *conscious-conversation-pending-generation-settlements*
             (nreverse remaining)
             *conscious-conversation-provider-budget-uncertain-p*
             (not (null remaining)))))
   (null *conscious-conversation-pending-generation-settlements*))
 
-(defun %conversation-openrouter-defer-generation-settlement (generation-id)
+(defun %conversation-openrouter-defer-generation-settlement
+    (generation-id fallback-cost)
   (pushnew
    (obj "generation_id" generation-id
-        "private" (if *conscious-conversation-private-provider-call-p* t nil))
+        "private" (if *conscious-conversation-private-provider-call-p* t nil)
+        "fallback_cost_usd" (or fallback-cost :null))
    *conscious-conversation-pending-generation-settlements*
    :key (lambda (pending) (gethash "generation_id" pending))
    :test #'string=)
@@ -2025,10 +2052,16 @@ to use its conservative fallback."
         "provider-outcome-ambiguous" settled-cost settled-cost
         "generation-reconciled" generation-id))
       ((%conversation-openrouter-generation-id-safe-p generation-id)
-       (%conversation-openrouter-defer-generation-settlement generation-id)
-       (%conversation-openrouter-accounting-anomaly
-        "provider-outcome-ambiguous" nil nil
-        "generation-reconciliation-pending" generation-id))
+       (let ((outcome-bound
+               (if completion-bounded-p
+                   reservation
+                   (%conversation-openrouter-unbounded-outcome-cost-bound
+                    reservation))))
+         (%conversation-openrouter-defer-generation-settlement
+          generation-id outcome-bound)
+         (%conversation-openrouter-accounting-anomaly
+          "provider-outcome-ambiguous" nil nil
+          "generation-reconciliation-pending" generation-id)))
       (completion-bounded-p
        (%conversation-openrouter-apply-charge reservation)
        (%conversation-openrouter-accounting-anomaly

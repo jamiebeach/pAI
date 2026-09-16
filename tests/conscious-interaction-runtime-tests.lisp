@@ -72,6 +72,9 @@
                   (search "conscious-recursive-session-budget-add" driver)
                   (search "/budget-add USD" driver)
                   (search "Private cost share (~d%)" driver)
+                  (search "pending_generation_settlement_count" driver)
+                  (search "pending_generation_fallback_usd" driver)
+                  (search "Admission remains paused until exact accounting or fallback settlement" driver)
                   (null (search "Private cost share (~d%%)" driver))
                   (null (search "/budget-add REQUESTS USD" driver))))
   (cir-check "web ingress no longer creates one thread per message"

@@ -95,6 +95,9 @@ evidence and remaining lock/notice work are in the
 current development envelope. It starts an idle container so loading source
 does not implicitly start a model-backed agent.
 
+[Provider budget accounting](docs/budget-accounting.md) describes cost
+admission, ambiguous generation settlement, and the `/budget` report.
+
 ## Configuration templates
 
 Copy `.env.example` to `.env`, replace every `replace-with-...` value, and
