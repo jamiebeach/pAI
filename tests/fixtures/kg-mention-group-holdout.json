@@ -1,0 +1,19 @@
+{
+  "source_kind": "synthetic-controlled",
+  "cases": [
+    {"case_id": "repeated-bicycle", "timestamp": 3995000000, "sources": [
+      {"source_id": "groups:1", "speaker_id": "operator", "kind": "original-utterance", "text": "I own a bicycle named Comet. Comet is a bicycle, not an animal, medical condition or software application."}
+    ]},
+    {"case_id": "distinct-same-name", "timestamp": 3995000060, "sources": [
+      {"source_id": "groups:2", "speaker_id": "operator", "kind": "original-utterance", "text": "I own two different cats, both named Flint. The first Flint is a black cat. The second Flint is a white cat. These are two separate individuals, not repeated descriptions of one cat."}
+    ]}
+  ],
+  "queries": [
+    {"query": "Comet", "expected_count": 1, "expected_object_label": "Comet"},
+    {"query": "Flint", "expected_count": 2, "expected_object_label": "Flint"},
+    {"query": "bicycle", "expected_count": 1, "expected_object_label": "Comet"},
+    {"query": "cat", "expected_count": 2, "expected_object_label": "Flint"},
+    {"query": "astronomy", "expected_count": 0, "expected_object_label": null},
+    {"query": "diabetes", "expected_count": 0, "expected_object_label": null}
+  ]
+}

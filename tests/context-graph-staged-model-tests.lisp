@@ -1,0 +1,60 @@
+;;;; harness: bare
+(load (merge-pathnames "context-graph-simple-model-tests.lisp" *load-truename*))
+(in-package :pai.context-graph)
+(defvar *staged-checks* 0)
+(defun st-check (name value) (unless value (error "FAIL ~a" name)) (incf *staged-checks*) (format t "PASS ~a~%" name))
+(multiple-value-bind (partition unused participants) (as-fixture)
+  (declare (ignore unused participants))
+  (let* ((ontology (gethash "ontology" partition)) (revision "personal-context-core-glm53-v1.2")
+         (graph (make-context-graph ontology)) (simple (sm-proposal))
+         (selection (%cg-object "new_entities" (gethash "new_entities" simple)))
+         (facts (%cg-object "facts" (gethash "facts" simple) "name_corrections" #()))
+         (episode (sm-episode "staged-first" "I own a cat named Mina." 100))
+         (step (%cg-object "episode" episode "entity_selection" :null "entity_request_digest" :null
+                           "proposal" :null "fact_request_digest" :null "review" :null "request_digest" :null))
+         (bundle (%cg-object "schema_version" 2 "authority_operation" "staged-model-session"
+                             "source_kind" "synthetic-controlled" "ontology" ontology "ontology_revision" revision
+                             "history" #() "step" step "queries" #("Mina" "cat" "tea"))))
+    (multiple-value-bind (context boundary) (lab-authority-context graph episode 0)
+      (declare (ignore boundary))
+      (let* ((before (%cg-authority-canonical-json selection))
+             (spec (lab-authority-step graph step 0 revision :staged)))
+        (st-check "first ask contains no fact schema"
+                  (%cg-closed-keys-p (gethash "properties" (gethash "schema" (gethash "value" spec))) '("new_entities")))
+        (st-check "entity input changes bind to a distinct request"
+                  (let ((changed (%cg-detach step)))
+                    (setf (gethash "case_id" (gethash "episode" changed)) "another-episode")
+                    (not (equal (gethash "request_digest" spec)
+                                (gethash "request_digest" (lab-authority-step graph changed 0 revision :staged))))))
+        (setf (gethash "entity_selection" step) selection (gethash "entity_request_digest" step) (gethash "request_digest" spec))
+        (let* ((next (lab-authority-step graph step 0 revision :staged))
+               (schema (gethash "schema" (gethash "value" next))))
+          (st-check "second ask forbids changing the entity table"
+                    (%cg-closed-keys-p (gethash "properties" schema) '("facts" "name_corrections")))
+          (st-check "source-supported compatible relationship passes typed schema" (%cgs-schema-valid-p facts schema))
+          (dolist (handle '("new_2" "operator"))
+            (let ((bad (%cg-detach facts)))
+              (setf (gethash "object" (aref (gethash "facts" bad) 0)) handle)
+              (st-check (format nil "typed schema rejects object ~a" handle) (not (%cgs-schema-valid-p bad schema)))))
+          (st-check "schema construction leaves first response unchanged" (equal before (%cg-authority-canonical-json selection)))
+          (setf (gethash "proposal" step) facts (gethash "fact_request_digest" step) (gethash "request_digest" next)))
+        (let ((changed (%cg-detach step)))
+          (setf (gethash "name" (aref (gethash "new_entities" (gethash "entity_selection" changed)) 0)) "changed")
+          (st-check "changed table invalidates second stage binding"
+                    (sm-error (lambda () (lab-authority-step graph changed 0 revision :staged)) "STAGED_FACT_BINDING_INVALID")))
+        (let ((changed (%cg-detach step)))
+          (setf (gethash "text" (aref (gethash "sources" (gethash "episode" changed)) 0)) "Different source.")
+          (st-check "changed source invalidates entity binding"
+                    (sm-error (lambda () (lab-authority-step graph changed 0 revision :staged)) "STAGED_ENTITY_BINDING_INVALID")))
+        (let ((review-spec (lab-authority-step graph step 0 revision :staged)))
+          (st-check "two extraction stages leave graph watermark untouched"
+                    (zerop (gethash "through_event_id" (%cg-authority-watermark graph "lab-agent" "lab-persona"))))
+          (setf (gethash "review" step) (sm-review context (%cgs-expand context ontology revision (%cgt-combine context ontology selection facts)))
+                (gethash "request_digest" step) (gethash "request_digest" review-spec)))
+        (let* ((result (al-run bundle)) (queries (gethash "queries" result)))
+          (st-check "staged lab subprocess applies independently reviewed extraction"
+                    (and (equal "accepted" (gethash "status" result))
+                         (= 1 (length (gethash "rows" (aref queries 0))))
+                         (= 1 (length (gethash "rows" (aref queries 1))))
+                         (zerop (length (gethash "rows" (aref queries 2)))))))))))
+(format t "STAGED-MODEL ~d passed, 0 failed~%" *staged-checks*)

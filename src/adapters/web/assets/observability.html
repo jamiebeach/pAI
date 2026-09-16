@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/pwa-icon.svg" type="image/svg+xml">
+<title>pAI Observability</title>
+<script src="/app-shell.js" defer></script>
+<script src="/viewport.js" defer></script>
+<script src="/observability.js" defer></script>
+<style>
+  :root{--bg:#0b0f14;--panel:#10151c;--panel2:#151c25;--border:#223042;--text:#e6edf3;--dim:#8b98a5;--accent:#5fb3ff;--good:#55d6a0;--warn:#f5c76b;--bad:#ff7b88;--purple:#b49cff;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--mono)}
+  #app{min-height:100vh;display:flex;flex-direction:column}header{position:sticky;top:0;z-index:20;padding:calc(8px + env(safe-area-inset-top)) 14px 8px;border-bottom:1px solid var(--border);background:rgba(11,15,20,.95);display:flex;justify-content:space-between;align-items:center}
+  h1{font-size:13px;margin:0;color:var(--dim);letter-spacing:.03em}main{width:min(1500px,100%);margin:0 auto;padding:14px;display:grid;gap:14px}.toolbar,.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  button,select{font:12px var(--mono);background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 10px;cursor:pointer}button:hover{border-color:var(--accent)}
+  .status{margin-left:auto;color:var(--dim);font-size:11px}.section{background:var(--panel);border:1px solid var(--border);border-radius:9px;overflow:hidden}.section>h2{font-size:12px;letter-spacing:.04em;margin:0;padding:10px 12px;border-bottom:1px solid var(--border);color:var(--dim)}.body{padding:12px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px}.card{background:var(--panel2);border:1px solid var(--border);border-radius:7px;padding:10px;min-width:0}.label{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}.value{overflow-wrap:anywhere}.lead{font-size:15px;line-height:1.45}.muted{color:var(--dim)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+  #activity{width:100%;height:250px;display:block}.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--dim);margin-top:8px}.swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}.usage{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.chip{background:var(--panel2);border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:10px}
+  .event-controls{display:flex;gap:8px;align-items:center;margin-bottom:8px}.tablewrap{overflow:auto;max-height:580px}table{border-collapse:collapse;width:100%;font-size:11px}th{position:sticky;top:0;background:var(--panel);color:var(--dim);text-align:left;padding:8px;border-bottom:1px solid var(--border)}td{padding:8px;border-bottom:1px solid #182330;vertical-align:top}.event-type{color:var(--accent);white-space:nowrap}.event-summary{min-width:310px;max-width:700px;overflow-wrap:anywhere}.event-id{color:var(--dim);white-space:nowrap}.context-button{color:var(--accent);padding:4px 7px}
+  .parameters{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}.parameter-group{background:var(--panel2);border:1px solid var(--border);border-radius:7px;padding:10px}.parameter-group h3{font-size:11px;color:var(--accent);margin:0 0 8px}.kv{display:grid;grid-template-columns:minmax(130px,1fr) minmax(130px,1.4fr);gap:5px 10px;padding:4px 0;border-bottom:1px dotted #263342;font-size:10px}.kv:last-child{border:0}.key{color:var(--dim);overflow-wrap:anywhere}.val{overflow-wrap:anywhere;white-space:pre-wrap}
+  .docket-item{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(260px,2fr) minmax(160px,.8fr);gap:10px;padding:10px;border-bottom:1px solid #182330}.docket-item:last-child{border:0}.docket-title{color:var(--accent);font-weight:600}.docket-next{line-height:1.45;overflow-wrap:anywhere}.docket-meta{color:var(--dim);font-size:10px;overflow-wrap:anywhere}
+  #context-panel{position:fixed;z-index:80;inset:0;background:rgba(0,0,0,.68);display:none;padding:clamp(8px,3vw,32px);overflow:hidden}#context-panel.open{display:grid;place-items:center}.context-dialog{width:min(1500px,100%);height:min(940px,calc(100dvh - 16px));min-height:0;background:var(--bg);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}.context-head{flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}.context-head strong{overflow-wrap:anywhere}.context-content{flex:1 1 auto;min-height:0;padding:12px;overflow:auto;overscroll-behavior:contain;display:grid;align-content:start;gap:10px}.json-pane{min-height:300px;max-height:58vh;background:var(--panel);border:1px solid var(--border);border-radius:7px;display:flex;flex-direction:column;overflow:hidden}.json-pane h3{flex:0 0 auto;margin:0;padding:8px 10px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:11px;color:var(--accent)}.json-scroll{flex:1 1 auto;min-height:0;margin:0;padding:10px;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font:11px/1.5 var(--mono);tab-size:2}details{border:1px solid var(--border);border-radius:7px;padding:8px}summary{cursor:pointer;color:var(--dim)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.45 var(--mono)}
+  @media(max-width:700px){main{padding:8px}.status{width:100%;margin:0}.event-summary{min-width:240px}.parameters{grid-template-columns:1fr}.docket-item{grid-template-columns:1fr}#activity{height:210px}#context-panel{padding:4px}.context-dialog{height:calc(100dvh - 8px)}.context-head .muted{display:none}.json-pane{min-height:260px;max-height:62vh}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header><h1>PAI OBSERVABILITY</h1><div class="btns"></div></header>
+  <main>
+    <div class="toolbar"><label class="muted">Window <select id="hours"><option value="1">1 hour</option><option value="6" selected>6 hours</option><option value="24">24 hours</option><option value="168">7 days</option></select></label><button id="refresh">Refresh now</button><span id="status" class="status">Loading live state…</span></div>
+    <section class="section"><h2>CURRENT ATTENTION</h2><div id="attention" class="body"></div></section>
+    <section class="section"><h2>WORK DOCKET · DURABLE GOALS AND USEFUL CONTINUATIONS</h2><div id="work-docket" class="body"></div></section>
+    <section class="section"><h2>ACTIVITY OVER TIME</h2><div class="body"><svg id="activity" role="img" aria-label="Timeline of durable pAI activity"></svg><div id="legend" class="legend"></div><div id="usage" class="usage"></div></div></section>
+    <section class="section"><h2>EVENT HISTORY · SELECT A MODEL REQUEST TO SEE ITS EXACT CONTEXT</h2><div class="body"><div class="event-controls"><label class="muted">Type <select id="event-filter"><option value="all">All observed activity</option></select></label><span id="event-count" class="muted"></span></div><div class="tablewrap"><table><thead><tr><th>ID / time</th><th>Event</th><th>Human-readable projection</th><th>Context</th></tr></thead><tbody id="events"></tbody></table></div></div></section>
+    <section class="section"><h2>EFFECTIVE RUNTIME PARAMETERS</h2><div id="parameters" class="body parameters"></div></section>
+  </main>
+</div>
+<div id="context-panel" role="dialog" aria-modal="true" aria-labelledby="context-title"><div class="context-dialog"><div class="context-head"><strong id="context-title">Model context</strong><span class="muted">explicit private diagnostic read · credentials redacted at capture</span><button id="context-close" style="margin-left:auto">Close</button></div><div id="context-content" class="context-content"></div></div></div>
+</body>
+</html>

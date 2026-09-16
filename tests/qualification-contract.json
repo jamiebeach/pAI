@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "default_lisp_profile": "offline-isolated",
+  "profiles": {
+    "offline-isolated": {
+      "state": "required",
+      "command": "sh tests/run-isolated.sh sbcl <repo> '*-tests.lisp'",
+      "requirements": [
+        "network-none",
+        "read-only-source",
+        "fresh-lisp-process-per-suite",
+        "sequential-runner",
+        "per-suite-scratch"
+      ]
+    },
+    "serial-performance": {
+      "state": "required",
+      "commands": [
+        "sh tests/run-isolated.sh sbcl <repo> observability-tracing-tests.lisp",
+        "sh tests/run-isolated.sh sbcl <repo> publication-contract-benchmark.lisp"
+      ],
+      "requirements": [
+        "network-none",
+        "read-only-source",
+        "no-concurrent-test-load"
+      ]
+    }
+  },
+  "lisp_suite_overrides": {
+    "observability-tracing-tests.lisp": "serial-performance"
+  },
+  "python_profiles": {
+    "offline-host": {
+      "state": "required",
+      "requirements": [
+        "network-none",
+        "read-only-source",
+        "PAI_PRIVATE_SCRATCH-points-to-disposable-private-directory"
+      ],
+      "commands": [
+        "python3 -m unittest discover -s tests -p 'test*.py' -v",
+        "python3 -m unittest discover -s tests -p '*_tests.py' -v"
+      ]
+    },
+    "writable-receipt-scratch": {
+      "state": "required",
+      "command": "python3 -m unittest discover -s tests -p test_context_graph_inference_qualification.py -v",
+      "requirements": [
+        "read-only-source",
+        "PAI_PRIVATE_SCRATCH-points-to-disposable-private-directory"
+      ]
+    },
+    "docker-worker": {
+      "state": "required",
+      "command": "PAI_TEST_IMAGE=<candidate-image> python3 -m unittest tests.test_context_graph_budget_worker -v",
+      "requirements": [
+        "Docker daemon",
+        "candidate image",
+        "disposable worker state"
+      ]
+    }
+  }
+}

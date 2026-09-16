@@ -1,0 +1,22 @@
+(in-package :agent)
+
+(ql:quickload :postmodern :silent t)
+(load (merge-pathnames "stabilization-baseline.lisp" *load-truename*))
+
+(let* ((ids-a '("a" "b" "c" "d" "e" "f"))
+       (ids-b '("f" "d" "b" "e" "a" "c"))
+       (pairs-a '(("a" "thought" "b" 0.95d0)
+                  ("c" "thought" "d" 0.91d0)
+                  ("d" "thought" "e" 0.89d0)))
+       (pairs-b '(("d" "thought" "e" 0.89d0)
+                  ("c" "thought" "d" 0.91d0)
+                  ("a" "thought" "b" 0.95d0)))
+       (first (%baseline-memory-kind-metrics "thought" ids-a pairs-a))
+       (second (%baseline-memory-kind-metrics "thought" ids-b pairs-b))
+       (first-json (shasht:write-json first nil))
+       (second-json (shasht:write-json second nil)))
+  (format t "~a baseline entropy is stable across insertion order.~%"
+          (if (string= first-json second-json) "PASS" "FAIL"))
+  (unless (string= first-json second-json)
+    (format t "first=~a~%second=~a~%" first-json second-json)
+    (uiop:quit 1)))

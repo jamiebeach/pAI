@@ -1,0 +1,95 @@
+;;;; harness: bare
+(load "tests/context-graph-mention-group-tests.lisp")
+(in-package :pai.context-graph)
+(let* ((*cgf-protocol* "identity-formation-v4")
+       (ontology (gethash "ontology" (as-fixture)))
+       (guide (map 'vector (lambda (name) (%cg-object "name" name "definition" "Fixture type meaning."
+                             "inclusion_rule" "Only source-supported instances." "exclusion_rule" "Other types."))
+                   (gethash "entity_types" ontology)))
+       (graph (make-context-graph ontology)) (quote "I own two different cats both named Mina.")
+       (episode (sm-episode "guided-descriptors" quote 100)) (seen nil))
+  (multiple-value-bind (full boundary) (lab-authority-context graph episode 0)
+    (let ((envelope (%cgf-generate graph full 0 ontology "personal-context-core-glm53-v1.2"
+      (lambda (phase spec digest) (declare (ignore digest))
+        (when (member phase '("new-identities" "review") :test #'equal)
+          (assert (%cg-authority-equal-p guide (gethash "descriptor_kind_guide" (gethash "input" spec))))
+          (assert (search "Distinct identities may have identical names" (gethash "system" spec)))
+          (push phase seen))
+        (gg-model phase spec t quote)) :descriptor-guide guide)))
+      (assert (= 2 (length seen)))
+      (setf (gethash "episode_id" boundary) (gethash "episode_id" (gethash "context" envelope)))
+      (let ((altered (%cg-detach guide)))
+        (setf (gethash "definition" (aref altered 0)) "Changed policy meaning.")
+        (assert (sm-error (lambda () (%cgf-apply graph boundary full envelope :descriptor-guide altered))
+                          "FORMATION_RECEIPT_MISMATCH"))
+        (assert (zerop (context-graph-entity-count graph))))
+      (assert (sm-error (lambda () (%cgf-apply graph boundary full envelope)) "FORMATION_DESCRIPTOR_GUIDE_INVALID"))
+      (%cgf-apply graph boundary full envelope :descriptor-guide guide)
+      (assert (= 4 (context-graph-entity-count graph)))
+      (assert (= 2 (context-graph-fact-count graph)))
+      (let* ((bundle (%cg-object "schema_version" 2 "authority_operation" "identity-formation-v4-session"
+                         "source_kind" "synthetic-controlled" "ontology" ontology "ontology_revision" "personal-context-core-glm53-v1.2"
+                         "history" #() "step" (%cg-object "episode" episode "calls" (gethash "calls" envelope))
+                         "descriptor_guide" guide "queries" #("Mina" "asteroid")
+                         "retrieval_policy" "focused-kg-v2"))
+             (result (al-run bundle)))
+        (assert (eq :true (gethash "terminal" result)))
+        (assert (equal "focused-kg-v2" (gethash "retrieval_revision" (aref (gethash "queries" result) 0))))))
+    (dolist (bad (list #() (concatenate 'vector guide (vector (aref guide 0)))))
+      (assert (sm-error (lambda () (%cgf-validate-descriptor-guide bad ontology)) "FORMATION_DESCRIPTOR_GUIDE_INVALID")))))
+(format t "DESCRIPTOR GUIDE meanings and naming ask, independent review, tamper refusal, same-name identity and lab cold replay passed~%")
+
+(let* ((*cgf-protocol* "identity-formation-v5") (ontology (gethash "ontology" (as-fixture)))
+       (graph (make-context-graph ontology)) (quote "I own a cat named Mina.")
+       (guide (map 'vector (lambda (name) (%cg-object "name" name "definition" "Fixture meaning."
+                    "inclusion_rule" "Source-supported." "exclusion_rule" "Other kinds.")) (gethash "entity_types" ontology))))
+  (multiple-value-bind (full boundary) (lab-authority-context graph (sm-episode "atomic-mentions" quote 100) 0)
+    (let* ((old (let ((*cgf-protocol* "identity-formation-v4")) (%cgf-mention-spec full)))
+           (new (%cgf-mention-spec full))
+           (envelope (%cgf-generate graph full 0 ontology "personal-context-core-glm53-v1.2"
+                       (lambda (phase spec digest) (declare (ignore digest)) (gg-model phase spec nil quote))
+                       :descriptor-guide guide)))
+      (assert (not (search "exactly ONE referent" (gethash "system" (gethash "value" old)))))
+      (assert (search "exactly ONE referent" (gethash "system" (gethash "value" new))))
+      (assert (%cg-authority-equal-p (gethash "schema" (gethash "value" old)) (gethash "schema" (gethash "value" new))))
+      (setf (gethash "episode_id" boundary) (gethash "episode_id" (gethash "context" envelope)))
+      (%cgf-apply graph boundary full envelope :descriptor-guide guide)
+      (assert (= 1 (context-graph-fact-count graph))))))
+(format t "ATOMIC MENTION opt-in request, unchanged schema and cold receipt replay passed~%")
+
+(dolist (supported '(t nil))
+  (let* ((*cgf-protocol* "identity-formation-v6") (ontology (gethash "ontology" (as-fixture)))
+         (graph (make-context-graph ontology)) (quote "I own a cat named Mina.")
+         (guide (map 'vector (lambda (name) (%cg-object "name" name "definition" "Fixture meaning."
+                      "inclusion_rule" "Source-supported." "exclusion_rule" "Other kinds."))
+                     (gethash "entity_types" ontology))))
+    (multiple-value-bind (full boundary) (lab-authority-context graph (sm-episode "canonical-label" quote 100) 0)
+      (let ((envelope (%cgf-generate graph full 0 ontology "personal-context-core-glm53-v1.2"
+              (lambda (phase spec digest)
+                (declare (ignore digest))
+                (when (equal phase "new-identities")
+                  (assert (search "shortest source-present canonical designator" (gethash "system" spec))))
+                (if (equal phase "review")
+                    (progn
+                      (assert (search "Judge canonical_label independently" (gethash "system" spec)))
+                      (assert (gethash "canonical_label"
+                                (gethash "properties" (gethash "quality_checks" (gethash "properties"
+                                  (gethash "entity:new_1" (gethash "properties"
+                                    (gethash "claim_reviews" (gethash "properties" (gethash "schema" spec))))))))))
+                      (gf-lab-model phase spec :canonical-label (if supported "supported" "unsupported")))
+                    (gg-model phase spec nil quote))) :descriptor-guide guide)))
+        (setf (gethash "episode_id" boundary) (gethash "episode_id" (gethash "context" envelope)))
+        (let ((result (%cgf-apply graph boundary full envelope :descriptor-guide guide)))
+          (assert (equal (if supported "accepted" "rejected") (gethash "status" result)))
+          (assert (= (if supported 1 0) (context-graph-fact-count graph))))
+        (when supported
+          (let* ((bundle (%cg-object "schema_version" 2 "authority_operation" "identity-formation-v6-session"
+                           "source_kind" "synthetic-controlled" "ontology" ontology
+                           "ontology_revision" "personal-context-core-glm53-v1.2" "history" #()
+                           "step" (%cg-object "episode" (sm-episode "canonical-label" quote 100)
+                                              "calls" (gethash "calls" envelope))
+                           "descriptor_guide" guide "queries" #("Mina") "retrieval_policy" "focused-kg-v5"))
+                 (result (al-run bundle)))
+            (assert (eq :true (gethash "terminal" result)))
+            (assert (equal "focused-kg-v5" (gethash "retrieval_revision" (aref (gethash "queries" result) 0))))))))))
+(format t "CANONICAL LABEL opt-in ask, independent review gate, dependent rejection and cold replay passed~%")

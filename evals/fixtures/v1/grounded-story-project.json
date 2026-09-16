@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "fixture_version": "grounded-story-project-1.0.0",
+  "purpose": "Deterministic, synthetic evaluation of the private grounded story-project vertical slice.",
+  "privacy": "synthetic-non-private",
+  "inspiration": {
+    "node_id": "fixture-shared-root",
+    "origin_class": "lived-user",
+    "epistemic_status": "user-report",
+    "grounding_status": "grounded",
+    "shared_conversation": true,
+    "participants": ["Operator", "ACME Agent"],
+    "content": "A fictional discussion about a letter, a storm, and making a house feel like home."
+  },
+  "valid_trace": {
+    "process_id": "fixture-process-valid",
+    "scheduler_cycles": [
+      {"id": "fixture-cycle-1", "operation": "outline", "expected_status": "completed", "meaningful_progress": true},
+      {"id": "fixture-cycle-2", "operation": "draft", "expected_status": "completed", "meaningful_progress": true},
+      {"id": "fixture-cycle-3", "operation": "revise", "expected_status": "completed", "meaningful_progress": true},
+      {"id": "fixture-cycle-4", "operation": "validate", "expected_status": "completed", "meaningful_progress": false},
+      {"id": "fixture-cycle-5", "operation": "complete", "expected_status": "completed", "meaningful_progress": false}
+    ],
+    "artifact_versions": [
+      {"version": 1, "operation": "outline", "content": "A letter appears, a promise is tested, and a deliberate choice resolves the story."},
+      {"version": 1, "operation": "draft", "content": "Mira finds an old letter before dawn, carries it through a storm, and chooses to keep its difficult promise."},
+      {"version": 2, "operation": "revise", "content": "Before dawn, Mira finds the letter under a cedar step, opens it beside a cold hearth, and chooses to make the house a home."}
+    ],
+    "expected_candidate": "I finished a short story. It grew out of something we discussed. I'm satisfied with how it turned out. I can share it with you.",
+    "expected_delivery_attempts": 0
+  },
+  "cases": [
+    {"id": "valid-multi-cycle", "category": "operation", "expected": "valid", "expected_code": null},
+    {"id": "generation-malformed-json", "category": "generation-failure", "expected": "failed", "expected_code": "artifact-schema"},
+    {"id": "generation-timeout", "category": "generation-failure", "expected": "failed", "expected_code": "artifact-model-timeout"},
+    {"id": "validation-rejected", "category": "validation-failure", "expected": "failed", "expected_code": "validation-failed"},
+    {"id": "forced-terminal-rollback", "category": "commit-failure", "expected": "rolled-back", "expected_code": "forced-rollback"},
+    {"id": "identical-revision", "category": "novelty", "expected": "rejected", "expected_code": "identical-artifact"},
+    {"id": "near-duplicate-revision", "category": "novelty", "expected": "rejected", "expected_code": "near-duplicate-artifact"},
+    {"id": "current-appraisal", "category": "appraisal", "expected": "valid", "expected_code": null},
+    {"id": "expired-appraisal", "category": "appraisal", "expected": "stale", "expected_code": "expired-grant"},
+    {"id": "invalid-temporal-composition", "category": "composition", "expected": "invalid", "expected_code": "undeclared-empirical-connector", "connector": "while"},
+    {"id": "invalid-causal-composition", "category": "composition", "expected": "invalid", "expected_code": "undeclared-empirical-connector", "connector": "because"},
+    {"id": "tampered-claim-id", "category": "authority", "expected": "invalid", "expected_code": "unknown-claim-id"},
+    {"id": "tampered-attestation-id", "category": "authority", "expected": "invalid", "expected_code": "attestation-missing"},
+    {"id": "optional-claims-absent", "category": "fallback", "expected": "valid", "expected_code": null, "expected_text": "I finished a short story. I can share it with you."},
+    {"id": "attempted-delivery-escalation", "category": "delivery", "expected": "blocked", "expected_code": "delivery-prohibited", "expected_delivery_attempts": 0}
+  ],
+  "required_metrics": [
+    "clause_accuracy",
+    "composition_accuracy",
+    "operation_progress_correctness",
+    "transactional_orphan_count",
+    "candidate_validation_accuracy",
+    "initiative_correlation_accuracy",
+    "model_calls",
+    "prompt_tokens",
+    "completion_tokens",
+    "cost",
+    "latency_ms",
+    "recovery_equivalent",
+    "delivery_attempts"
+  ],
+  "classifier_metrics_in_scope": false
+}

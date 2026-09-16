@@ -1,0 +1,80 @@
+;;;; harness: bare
+(load (merge-pathnames "context-graph-runtime-owner-tests.lisp" *load-truename*))
+(in-package :pai.context-graph)
+
+(let* ((ontology (gethash "ontology" (as-fixture)))
+       (graph (make-context-graph ontology))
+       (episode (sm-episode "bounded-source" "I own a cat named Mina." 100))
+       (*cgt-protocol* "bounded-v2"))
+  (multiple-value-bind (full boundary) (lab-authority-context graph episode 0)
+    (declare (ignore boundary))
+    ;; A large episode is covered exactly once by unmodified source objects.
+    (let* ((source (aref (gethash "sources" (gethash "source_packet" full)) 0))
+           (sources (map 'vector (lambda (i)
+                        (let ((s (%cg-detach source)))
+                          (setf (gethash "source_id" s) (format nil "source:~d" i)
+                                (gethash "text" s) (make-string 1500 :initial-element #\x)) s))
+                      (coerce (loop for i below 40 collect i) 'vector)))
+           (copy (%cg-detach full)))
+      (setf (gethash "sources" (gethash "source_packet" copy)) sources)
+      (let ((batches (%cgro-source-batches copy)))
+        (assert (= 10 (length batches)))
+        (assert (%cg-authority-equal-p sources (apply #'concatenate 'vector (coerce batches 'list))))))
+    (let* ((context (%cgro-batch-context graph full 0 "staged"))
+           (selection (%cg-object "new_entities" (gethash "new_entities" (sm-proposal))))
+           (schema (%cgt-fact-schema context ontology selection)))
+      (assert (= 12 (gethash "maxItems" (gethash "facts" (gethash "properties" schema)))))
+      (assert (= 0 (gethash "maxItems" (gethash "name_corrections" (gethash "properties" schema)))))
+      (assert (not (%cgs-schema-valid-p (%cg-object "facts" "not an array" "name_corrections" #()) schema)))
+      (assert (sm-error (lambda () (%cgro-batch-context graph full 10 "staged")) "RUNTIME_BATCH_INDEX_INVALID"))
+      ;; The complete advertised handle table plus new slots cannot exceed 24.
+      (dotimes (known 25)
+        (let ((copy (%cg-detach context)))
+          (setf (gethash "eligible_entities" copy) (make-array known :initial-element (%cg-object)))
+          (assert (<= (+ known (gethash "maxItems" (gethash "new_entities" (gethash "properties" (%cgt-entity-schema copy ontology))))) 24)))))
+    (let ((copy (%cg-detach full)))
+      (setf (gethash "eligible_entities" copy) (vector (%cg-object "entity_id" "target"))
+            (gethash "correction_scopes" copy) #())
+      (assert (= 0 (gethash "maxItems" (gethash "name_corrections" (gethash "properties" (%cgt-correction-schema copy ontology)))))))))
+(format t "BOUNDED-RUNTIME complete source coverage, joint slots, fact/correction isolation and malformed-output refusal passed~%")
+
+;; Two independently admitted batches reuse local new_1 without ID collision.
+(let* ((ontology (gethash "ontology" (as-fixture))) (graph (make-context-graph ontology))
+       (revision "personal-context-core-glm53-v1.2")
+       (episode (sm-episode "multi-batch" "I own a cat named Mina." 100))
+       (names #("Mina" "Nora")) (ids nil))
+  (setf (gethash "sources" episode)
+        (coerce (loop for i below 9 collect
+                  (%cg-object "source_id" (format nil "batch-source:~d" i) "speaker_id" "operator"
+                              "kind" "original-utterance" "text"
+                              (if (= i 8) "I own a cat named Nora." "I own a cat named Mina."))) 'vector))
+  (dotimes (i 2)
+    (multiple-value-bind (full boundary) (lab-authority-context graph episode i)
+      (let* ((context (%cgro-batch-context graph full i "staged" "bounded-v3"))
+             (simple (sm-proposal)) (name (aref names i)))
+        (push (gethash "episode_id" context) ids)
+        (setf (gethash "episode_id" boundary) (gethash "episode_id" context)
+              (gethash "name" (aref (gethash "new_entities" simple) 0)) name
+              (gethash "quote" (aref (gethash "evidence" (aref (gethash "facts" simple) 0)) 0))
+              (format nil "I own a cat named ~a." name))
+        (let* ((raw (%cgs-expand context ontology revision simple))
+               (review (sm-review context raw)) (spec (%cgm-review-input context raw revision)))
+          (assert (equal "accepted" (gethash "status"
+                    (%cgm-apply-reviewed graph boundary context raw review revision
+                      (%cg-object "request_digest" (%cg-authority-digest "model-review-input" (gethash "value" spec))
+                                  "response_digest" (%cg-authority-digest "model-review-output" review))))))))))
+  (assert (not (equal (first ids) (second ids))))
+  (assert (= 4 (context-graph-entity-count graph)))
+  (assert (= 2 (context-graph-fact-count graph)))
+  (loop for name across names do
+    (assert (= 1 (length (gethash "rows" (%cg-authority-search graph "lab-agent" "lab-persona" name))))))
+  (assert (zerop (length (gethash "rows" (%cg-authority-search graph "lab-agent" "lab-persona" "asteroid"))))))
+(format t "BOUNDED-RUNTIME two-batch identity isolation and independent useful retrieval passed~%")
+
+(let* ((ontology (gethash "ontology" (as-fixture)))
+       (runtime (context-graph-runtime-create ontology "personal-context-core-glm53-v1.2" "lab-agent" "lab-persona")))
+  (dolist (mode '("staged" "correction"))
+    (setf (gethash (%cgro-task 1 mode) (context-graph-runtime-covered runtime)) "context-graph-runtime-reviewed"))
+  (flet ((forbidden (&rest args) (declare (ignore args)) (error "Reviewed v1 work must not repeat")))
+    (assert (equal "idle" (gethash "status" (context-graph-runtime-step runtime '(1) #'forbidden #'forbidden #'forbidden
+                                             :protocol "bounded-v2"))))))

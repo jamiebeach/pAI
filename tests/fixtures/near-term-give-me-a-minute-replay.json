@@ -1,0 +1,114 @@
+{
+  "fixture_version": 1,
+  "description": "Entirely synthetic deferred-work receipt fixture about indexing a fictional workshop catalogue. No conversation transcript is reproduced.",
+  "timeline": [
+    {
+      "lane": "public",
+      "at": 3994660020,
+      "role": "user",
+      "turn_id": "turn-gmam-001",
+      "content": "Suggest a way to index the fictional workshop catalogue so its sample parts are easy to find."
+    },
+    {
+      "lane": "private",
+      "event": {
+        "id": "nt-event-001",
+        "type": "near-term-item-observed",
+        "at": 3994660021,
+        "payload": {
+          "item_id": "near-term-gmam",
+          "item_type": "deferred-intention",
+          "source": "conversation",
+          "state": "seeded",
+          "summary": "Develop a three-stage indexing plan for the fictional workshop catalogue.",
+          "origin_turn_id": "turn-gmam-001",
+          "origin_event_ids": [
+            "public-gmam-001"
+          ],
+          "evidence_ids": [
+            "catalogue-specification-fixture",
+            "index-format-fixture"
+          ],
+          "commitment_receipt_id": "receipt-gmam-001",
+          "recipient": "the operator",
+          "attention_at": 3994660081,
+          "response_deadline": 3994660321,
+          "expires_at": 3994660381
+        }
+      }
+    },
+    {
+      "lane": "public",
+      "at": 3994660022,
+      "role": "assistant",
+      "turn_id": "turn-gmam-002",
+      "in_reply_to_turn_id": "turn-gmam-001",
+      "in_reply_to_at": 3994660020,
+      "receipt_id": "receipt-gmam-001",
+      "content": "Give me a minute. I have ideas."
+    },
+    {
+      "lane": "public",
+      "at": 3994660060,
+      "role": "user",
+      "turn_id": "turn-gmam-003",
+      "content": "Unrelated: is the printer queue empty?"
+    },
+    {
+      "lane": "private",
+      "event": {
+        "id": "nt-event-002",
+        "type": "near-term-item-transition",
+        "at": 3994660085,
+        "payload": {
+          "item_id": "near-term-gmam",
+          "to_state": "evolving",
+          "evidence_ids": [
+            "cognitive-pass-gmam-001"
+          ]
+        }
+      }
+    },
+    {
+      "lane": "private",
+      "event": {
+        "id": "nt-event-003",
+        "type": "near-term-item-transition",
+        "at": 3994660100,
+        "payload": {
+          "item_id": "near-term-gmam",
+          "to_state": "ready",
+          "artifact_summary": "A three-stage indexing plan: assign part codes, group categories, and generate an alphabetical index."
+        }
+      }
+    },
+    {
+      "lane": "public",
+      "at": 3994660110,
+      "role": "user",
+      "turn_id": "turn-gmam-004",
+      "content": "Okay, what were your ideas?"
+    },
+    {
+      "lane": "public",
+      "at": 3994660111,
+      "role": "assistant",
+      "turn_id": "turn-gmam-005",
+      "in_reply_to_turn_id": "turn-gmam-004",
+      "content": "Use a three-stage indexing plan: assign part codes, group categories, and generate an alphabetical index."
+    },
+    {
+      "lane": "private",
+      "event": {
+        "id": "nt-event-004",
+        "type": "near-term-item-transition",
+        "at": 3994660112,
+        "payload": {
+          "item_id": "near-term-gmam",
+          "to_state": "expressed",
+          "expression_turn_id": "turn-gmam-005"
+        }
+      }
+    }
+  ]
+}

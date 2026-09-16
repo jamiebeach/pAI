@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "result_version": "grounded-story-project-result-1.0.0",
+  "fixture_version": "grounded-story-project-1.0.0",
+  "fixture_sha256": "3cc1c565e3a2d378530ff2dd2338565b0ae41c0231aedbd9b97610b75ef2d27e",
+  "sanitized": true,
+  "execution": {
+    "model_transport": "synthetic-injected-adapters",
+    "external_network_calls": 0,
+    "openrouter_calls": 0,
+    "database": "disposable-postgresql-16-pgvector",
+    "delivery_adapter_calls": 0
+  },
+  "metrics": {
+    "clause_accuracy": 1.0,
+    "composition_accuracy": 1.0,
+    "operation_progress_correctness": 1.0,
+    "transactional_orphan_count": 0,
+    "candidate_validation_accuracy": 1.0,
+    "initiative_correlation_accuracy": 1.0,
+    "model_calls": 3,
+    "prompt_tokens": 12,
+    "completion_tokens": 18,
+    "cost": 0.0,
+    "latency_ms": 0.0,
+    "recovery_equivalent": true,
+    "delivery_attempts": 0
+  },
+  "operation_metrics": [
+    {"operation": "outline", "calls": 1, "prompt_tokens": 4, "completion_tokens": 6, "cost": 0.0, "latency_ms": 0.0},
+    {"operation": "draft", "calls": 1, "prompt_tokens": 4, "completion_tokens": 6, "cost": 0.0, "latency_ms": 0.0},
+    {"operation": "revise", "calls": 1, "prompt_tokens": 4, "completion_tokens": 6, "cost": 0.0, "latency_ms": 0.0},
+    {"operation": "validate", "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "latency_ms": 0.0},
+    {"operation": "complete", "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "latency_ms": 0.0}
+  ],
+  "case_results": [
+    {"id": "valid-multi-cycle", "actual": "valid", "code": null, "correct": true},
+    {"id": "generation-malformed-json", "actual": "failed", "code": "artifact-schema", "correct": true},
+    {"id": "generation-timeout", "actual": "failed", "code": "artifact-model-timeout", "correct": true},
+    {"id": "validation-rejected", "actual": "failed", "code": "validation-failed", "correct": true},
+    {"id": "forced-terminal-rollback", "actual": "rolled-back", "code": "forced-rollback", "correct": true},
+    {"id": "identical-revision", "actual": "rejected", "code": "identical-artifact", "correct": true},
+    {"id": "near-duplicate-revision", "actual": "rejected", "code": "near-duplicate-artifact", "correct": true},
+    {"id": "current-appraisal", "actual": "valid", "code": null, "correct": true},
+    {"id": "expired-appraisal", "actual": "stale", "code": "expired-grant", "correct": true},
+    {"id": "invalid-temporal-composition", "actual": "invalid", "code": "undeclared-empirical-connector", "correct": true},
+    {"id": "invalid-causal-composition", "actual": "invalid", "code": "undeclared-empirical-connector", "correct": true},
+    {"id": "tampered-claim-id", "actual": "invalid", "code": "unknown-claim-id", "correct": true},
+    {"id": "tampered-attestation-id", "actual": "invalid", "code": "attestation-missing", "correct": true},
+    {"id": "optional-claims-absent", "actual": "valid", "code": null, "correct": true},
+    {"id": "attempted-delivery-escalation", "actual": "blocked", "code": "delivery-prohibited", "correct": true}
+  ],
+  "test_evidence": {
+    "first_person_evidence": {"passed": 34, "failed": 0},
+    "grounded_worker": {"passed": 27, "failed": 0},
+    "creative_projects": {"passed": 19, "failed": 0},
+    "appraisal_and_claim_grants": {"passed": 22, "failed": 0},
+    "semantic_publication": {"passed": 20, "failed": 0},
+    "grounded_integration": {"passed": 35, "failed": 0},
+    "rollback_recovery": {"passed": 4, "failed": 0},
+    "epistemic_memory_regression": {"passed": 35, "failed": 0},
+    "typed_retrieval_regression": {"passed": 28, "failed": 0}
+  },
+  "classifier_metrics": null,
+  "notes": "Synthetic deterministic evidence only. No private content, production state, provider request, or delivery attempt is included. Zero latency records mean the adapters were immediate and network-free, not that a real provider has zero latency."
+}

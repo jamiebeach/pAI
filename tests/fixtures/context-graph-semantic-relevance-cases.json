@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "selector_revision": "separated-nonparticipant-top-cluster-v2",
+  "cases": [
+    {
+      "name": "symptom paraphrase",
+      "query": "headaches",
+      "scores": [
+        {"kind": "entity", "id": "entity:condition-alpha", "score_milli": 667},
+        {"kind": "entity", "id": "entity:condition-beta", "score_milli": 502},
+        {"kind": "entity", "id": "entity:material", "score_milli": 473}
+      ],
+      "expected_ids": ["entity:condition-alpha"]
+    },
+    {
+      "name": "seasonal paraphrase",
+      "query": "seasonal allergies",
+      "scores": [
+        {"kind": "entity", "id": "entity:condition-alpha", "score_milli": 463},
+        {"kind": "entity", "id": "entity:condition-beta", "score_milli": 642},
+        {"kind": "entity", "id": "entity:material", "score_milli": 423}
+      ],
+      "expected_ids": ["entity:condition-beta"]
+    },
+    {
+      "name": "multiple valid companions",
+      "query": "pets",
+      "scores": [
+        {"kind": "entity", "id": "entity:organism-alpha", "score_milli": 658},
+        {"kind": "entity", "id": "entity:organism-beta", "score_milli": 647},
+        {"kind": "entity", "id": "entity:field", "score_milli": 480}
+      ],
+      "expected_ids": ["entity:organism-alpha", "entity:organism-beta"]
+    },
+    {
+      "name": "hard negative",
+      "query": "blood type",
+      "scores": [
+        {"kind": "entity", "id": "entity:condition-alpha", "score_milli": 512},
+        {"kind": "entity", "id": "entity:condition-beta", "score_milli": 508},
+        {"kind": "entity", "id": "entity:material", "score_milli": 532}
+      ],
+      "expected_ids": []
+    },
+    {
+      "name": "unseparated result refuses context",
+      "query": "ambiguous topic",
+      "scores": [
+        {"kind": "entity", "id": "entity:artifact-alpha", "score_milli": 620},
+        {"kind": "entity", "id": "entity:artifact-beta", "score_milli": 550}
+      ],
+      "expected_ids": []
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "semantic-vocabulary-gap",
+      "agent_id": "fixture-agent",
+      "persona_id": "fixture-persona",
+      "maximum": 2,
+      "episode_event": {
+        "id": 110,
+        "type": "conversation-episode-sealed",
+        "agent_id": "fixture-agent",
+        "timestamp": 4100000110,
+        "caused_by": null,
+        "payload": {
+          "schema_version": 1,
+          "episode_id": "episode:fixture:outing",
+          "persona_id": "fixture-persona",
+          "first_event_id": 101,
+          "last_event_id": 101,
+          "first_timestamp": 4100000101,
+          "last_timestamp": 4100000101,
+          "source_event_ids": [101],
+          "synopsis": "Planning for a long-distance outing.",
+          "subjects": ["trip planning"],
+          "entities": ["operator"],
+          "retrieval_cues": ["what to pack for a long ride"],
+          "broader_categories": ["travel planning"],
+          "unresolved_threads": [],
+          "protocol_revision": "recursive-conversation-episode-v1",
+          "projection_revision": "conversation-episodes-v2",
+          "sealed_at": 4100000110
+        }
+      },
+      "events": [
+        {
+          "id": 101,
+          "type": "user-message",
+          "agent_id": "fixture-agent",
+          "timestamp": 4100000101,
+          "caused_by": null,
+          "payload": {"text": "What should I pack for the long ride?"}
+        },
+        {
+          "id": 110,
+          "type": "conversation-episode-sealed",
+          "agent_id": "fixture-agent",
+          "timestamp": 4100000110,
+          "caused_by": null,
+          "payload": {
+            "schema_version": 1,
+            "episode_id": "episode:fixture:outing",
+            "persona_id": "fixture-persona",
+            "first_event_id": 101,
+            "last_event_id": 101,
+            "first_timestamp": 4100000101,
+            "last_timestamp": 4100000101,
+            "source_event_ids": [101],
+            "synopsis": "Planning for a long-distance outing.",
+            "subjects": ["trip planning"],
+            "entities": ["operator"],
+            "retrieval_cues": ["what to pack for a long ride"],
+            "broader_categories": ["travel planning"],
+            "unresolved_threads": [],
+            "protocol_revision": "recursive-conversation-episode-v1",
+            "projection_revision": "conversation-episodes-v2",
+            "sealed_at": 4100000110
+          }
+        },
+        {
+          "id": 201,
+          "type": "memory-baseline-node",
+          "agent_id": "fixture-agent",
+          "timestamp": 4100000201,
+          "caused_by": null,
+          "payload": {
+            "schema_version": 1,
+            "session_id": "fixture",
+            "ordinal": 1,
+            "node": {
+              "scalar_json": "{\"id\":\"memory:touring-equipment\",\"content\":\"The operator owns a basalt-grey touring bicycle named Northstar.\",\"created_at\":\"2026-09-01T12:00:00Z\",\"origin_class\":\"lived-user\",\"grounding_status\":\"grounded\",\"epistemic_metadata\":{\"role\":\"user\"}}",
+              "embedding_binary_hex": "",
+              "retrieval_embedding_binary_hex": ""
+            }
+          }
+        },
+        {
+          "id": 202,
+          "type": "memory-baseline-node",
+          "agent_id": "fixture-agent",
+          "timestamp": 4100000202,
+          "caused_by": null,
+          "payload": {
+            "schema_version": 1,
+            "session_id": "fixture",
+            "ordinal": 2,
+            "node": {
+              "scalar_json": "{\"id\":\"memory:tea-preference\",\"content\":\"The operator prefers jasmine tea.\",\"created_at\":\"2026-09-01T13:00:00Z\",\"origin_class\":\"lived-user\",\"grounding_status\":\"grounded\",\"epistemic_metadata\":{\"role\":\"user\"}}",
+              "embedding_binary_hex": "",
+              "retrieval_embedding_binary_hex": ""
+            }
+          }
+        }
+      ],
+      "retrieval": {
+        "semantic_results": [
+          {"memory_node_id": "memory:touring-equipment", "distance": 0.09},
+          {"memory_node_id": "memory:tea-preference", "distance": 0.92}
+        ],
+        "lexical_results": []
+      },
+      "expected_discovered_memory_node_ids": [
+        "memory:touring-equipment",
+        "memory:tea-preference"
+      ],
+      "expected_selected_memory_node_ids": ["memory:touring-equipment"],
+      "ontology": {
+        "entity_types": ["person", "object"],
+        "edge_types": [
+          {"name": "owns", "subject_types": ["person"], "object_types": ["object"]}
+        ]
+      },
+      "graph_episode": {
+        "episode_id": "episode:fixture:outing",
+        "occurred_at": "2026-09-02T12:00:00Z",
+        "learned_at": "2026-09-02T12:00:00Z",
+        "content": "Offline held-out retrieval fixture."
+      },
+      "proposal": {
+        "entities": [
+          {"local_ref": "operator", "type": "person", "name": "Operator", "aliases": [], "classifications": ["operator"], "action": "NEW", "existing_id": null},
+          {"local_ref": "bike", "type": "object", "name": "Northstar", "aliases": [], "classifications": ["bicycle", "transport equipment"], "action": "NEW", "existing_id": null}
+        ],
+        "facts": [
+          {
+            "subject_ref": "operator",
+            "predicate": "owns",
+            "object_ref": "bike",
+            "fact": "The operator owns a basalt-grey touring bicycle named Northstar.",
+            "supersedes_fact_id": null,
+            "evidence_status": "direct",
+            "evidence_note": "Exact selected memory evidence.",
+            "grounding": {
+              "schema_version": 1,
+              "scope": "assertion",
+              "polarity": "positive",
+              "attributed_to_ref": "operator",
+              "evidence": [
+                {"source_id": "memory-event:201", "quote": "The operator owns a basalt-grey touring bicycle named Northstar."}
+              ]
+            }
+          }
+        ]
+      },
+      "held_out_queries": [
+        {"query": "Northstar", "expected_result_count": 1},
+        {"query": "transport equipment", "expected_result_count": 1},
+        {"query": "jasmine tea", "expected_result_count": 0}
+      ]
+    }
+  ]
+}

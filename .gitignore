@@ -1,0 +1,77 @@
+# Runtime state — never tracked. The event log is sacred state and belongs to
+# the instance, not the source repository.
+#
+# NOTE: these are anchored with a leading slash so they match only at the
+# repository root. An unanchored pattern like `postgres/` matches a directory
+# of that name ANYWHERE in the tree — which silently excluded
+# src/adapters/postgres/ on the first attempt. Keep them anchored.
+/state/
+/config/instance.json
+*.jsonl
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+/memory-graph.json
+/conversation.json
+/self-model.json
+/soul.json
+/captured-functions/
+/event-log/
+
+# Secrets and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+key.txt
+bot.txt
+.env
+.env.*
+!.env.example
+secrets/
+
+# Build output
+*.fasl
+*.fas
+*.lib
+*.dx32fsl
+*.dx64fsl
+/build/
+/dist/
+/.tools/
+/__pycache__/
+**/__pycache__/
+*.py[cod]
+/pai
+/pai.exe
+
+# Embedded service data (standalone mode) — anchored, see note above
+/postgres/
+/ollama/
+/logs/
+/artifacts/curiosity-lab/
+/artifacts/context-graph-lab/
+/artifacts/context-graph-calibration/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*~
+\#*\#
+.\#*
+.clone-state/
+/.claude/
+/.cache/
+/.q5-lifecycle-state/
+/.pai-review/
+/.scratch/
+/.pai-promotion-backups/
+/.pai-promotion-staging/
+/.uv-cache/
+/runtime-backups/
+/.publication-output/
+/.test-logs/
+
+CodexAssessment*.md

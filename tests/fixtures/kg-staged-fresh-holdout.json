@@ -1,0 +1,24 @@
+{
+  "source_kind": "synthetic-controlled",
+  "cases": [
+    {"case_id": "different-species", "timestamp": 3992000000, "sources": [
+      {"source_id": "fresh:one", "speaker_id": "operator", "kind": "original-utterance", "text": "Here is the information I want remembered: I own a dog named Cedar and a finch named Pip. These are two separate animals. The dog and the finch are both still with me. This note is about their identities, not a request to change anything."}
+    ]},
+    {"case_id": "specific-record-error", "timestamp": 3992000060, "sources": [
+      {"source_id": "fresh:two", "speaker_id": "operator", "kind": "original-utterance", "text": "There was a transcription mistake in my earlier note. The name of my dog has always been Cinder, not Cedar. Please correct the stored name of that same dog. I am not renaming the dog. My finch is still Pip and its record should stay as it is."}
+    ]},
+    {"case_id": "suggestion-and-uncertainty", "timestamp": 3992000120, "sources": [
+      {"source_id": "fresh:three", "speaker_id": "operator", "kind": "original-utterance", "text": "For a fictional story, suppose one of those animals were named Maple. I have not said which animal even in the story. This is only a hypothetical name, not an actual name, nickname or correction. Keep my real animals' records unchanged."}
+    ]}
+  ],
+  "queries": [
+    {"query": "Cinder", "expected_count": 1, "expected_object_label": "Cinder"},
+    {"query": "dog", "expected_count": 1, "expected_object_label": "Cinder"},
+    {"query": "Pip", "expected_count": 1, "expected_object_label": "Pip"},
+    {"query": "finch", "expected_count": 1, "expected_object_label": "Pip"},
+    {"query": "Cedar", "expected_count": 0, "expected_object_label": null},
+    {"query": "Maple", "expected_count": 0, "expected_object_label": null},
+    {"query": "turtle", "expected_count": 0, "expected_object_label": null},
+    {"query": "coffee", "expected_count": 0, "expected_object_label": null}
+  ]
+}

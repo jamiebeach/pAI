@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "interactive-dev": {
+      "profile_id": "interactive-dev",
+      "revision": 2,
+      "max_model_calls": 8,
+      "max_tool_operations": 6,
+      "max_reasoning_continuations": 0,
+      "max_tool_result_characters": 12000,
+      "permitted_proposal_kinds": [
+        "tool-call-proposal",
+        "publication-candidate"
+      ],
+      "permitted_tools": ["search-files"],
+      "budget_exhaustion": "suspend",
+      "renewal_policy": "explicit-only"
+    },
+    "timely-dev": {
+      "profile_id": "timely-dev",
+      "revision": 2,
+      "max_model_calls": 6,
+      "max_tool_operations": 4,
+      "max_reasoning_continuations": 0,
+      "max_tool_result_characters": 10000,
+      "permitted_proposal_kinds": [
+        "tool-call-proposal",
+        "publication-candidate"
+      ],
+      "permitted_tools": ["search-files"],
+      "budget_exhaustion": "suspend",
+      "renewal_policy": "explicit-only"
+    },
+    "background-dev": {
+      "profile_id": "background-dev",
+      "revision": 2,
+      "max_model_calls": 4,
+      "max_tool_operations": 3,
+      "max_reasoning_continuations": 0,
+      "max_tool_result_characters": 8000,
+      "permitted_proposal_kinds": [
+        "tool-call-proposal",
+        "publication-candidate"
+      ],
+      "permitted_tools": ["search-files"],
+      "budget_exhaustion": "suspend",
+      "renewal_policy": "explicit-only"
+    }
+  }
+}

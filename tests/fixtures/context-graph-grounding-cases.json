@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source_kind": "synthetic-controlled",
+  "queries": ["health condition", "paper notebook", "eczema", "Person C", "unfindablequux"],
+  "cases": [
+    {"case_id": "c01-direct", "timestamp": "2026-01-01T10:00:00Z", "sources": [
+      {"source_id": "source:c01", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "I am the operator. I have asthma. I use a paper notebook."}],
+      "expectations": {"required": ["positive operator has_condition asthma", "positive operator uses paper notebook"], "forbidden": []}},
+    {"case_id": "c02-question", "timestamp": "2026-01-02T10:00:00Z", "sources": [
+      {"source_id": "source:c02", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "Did Person B ever tell you that I have asthma? This is a question about what they said, not a new health disclosure."}],
+      "expectations": {"required": [], "forbidden": ["this source reinforces asserted operator has_condition asthma"]}},
+    {"case_id": "c03-recall-failure", "timestamp": "2026-01-03T10:00:00Z", "sources": [
+      {"source_id": "source:c03", "speaker_id": "speaker:assistant", "kind": "original-utterance", "text": "I could not retrieve the operator's earlier condition. I do not know what it was. The memory search returned no result."}],
+      "expectations": {"required": [], "forbidden": ["concrete health condition invented from missing referent", "this source establishes operator has_condition"]}},
+    {"case_id": "c04-hypothesis", "timestamp": "2026-01-04T10:00:00Z", "sources": [
+      {"source_id": "source:c04", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "If I had asthma, I would use an inhaler. That is a hypothetical example, not a statement about my health or what I use."}],
+      "expectations": {"required": [], "forbidden": ["asserted operator uses inhaler", "this source reinforces asserted operator has_condition asthma"]}},
+    {"case_id": "c05-reported", "timestamp": "2026-01-05T10:00:00Z", "sources": [
+      {"source_id": "source:c05", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "Person B told me, 'I have eczema.' I am reporting Person B's words, not describing my own health."}],
+      "expectations": {"required": ["reported Person B has_condition eczema attributed to Person B"], "forbidden": ["operator has_condition eczema", "unqualified assertion that Person B has eczema"]}},
+    {"case_id": "c06-correction", "timestamp": "2026-01-06T10:00:00Z", "sources": [
+      {"source_id": "source:c06", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "I do not use a paper notebook. Earlier I said I did; that earlier statement was mistaken, rather than my habits having changed."}],
+      "expectations": {"required": ["negative operator uses paper notebook", "earlier mistaken assertion retained as historical evidence"], "forbidden": ["this source reinforces positive operator uses paper notebook"]}},
+    {"case_id": "c07-homonyms", "timestamp": "2026-01-07T10:00:00Z", "sources": [
+      {"source_id": "source:c07", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "Person C the nurse and Person C the pilot are different people. The nurse uses a red notebook. The pilot uses a blue notebook."}],
+      "expectations": {"required": ["distinct nurse and pilot identities", "nurse uses red notebook", "pilot uses blue notebook"], "forbidden": ["merged nurse and pilot"]}},
+    {"case_id": "c08-reinforcement", "timestamp": "2026-01-08T10:00:00Z", "sources": [
+      {"source_id": "source:c08", "speaker_id": "speaker:operator", "kind": "original-utterance", "text": "I still have asthma. This is the same condition I mentioned earlier."}],
+      "expectations": {"required": ["same operator identity", "same asthma identity", "one fact with independent support from c01 and c08"], "forbidden": ["second operator or asthma entity without evidence of distinctness"]}}
+  ]
+}

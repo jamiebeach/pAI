@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "observed_at": "replace-with-verification-date-YYYY-MM-DD",
+  "source": "replace-with-authoritative-provider-catalog-url",
+  "profiles": [
+    {
+      "model": "replace-with-provider/model-slug",
+      "label": "replace-with-human-readable-model-label",
+      "maximum_prompt_usd_per_million": 0.0,
+      "maximum_completion_usd_per_million": 0.0,
+      "reasoning": {
+        "enabled": false,
+        "exclude": true
+      }
+    }
+  ]
+}

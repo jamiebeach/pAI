@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>pAI Context Graph Episode Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">IMMUTABLE REPLAY WORKBENCH</p>
+      <h1>Context Graph Episode Lab</h1>
+    </div>
+    <div id="seed-summary" class="seed-summary">Opening seed…</div>
+  </header>
+  <main>
+    <aside class="episodes-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">SOURCE RECEIPTS</p>
+          <h2>Episodes</h2>
+        </div>
+        <span id="episode-count" class="count"></span>
+      </div>
+      <input id="episode-filter" type="search" placeholder="Filter synopsis, entity or ID">
+      <div id="status-filters" class="status-filters" role="group" aria-label="Episode status"></div>
+      <div id="episode-list" class="episode-list"></div>
+    </aside>
+
+    <section class="graph-panel">
+      <div class="graph-toolbar">
+        <div>
+          <p class="eyebrow">REVIEWED PROJECTION</p>
+          <h2 id="graph-title">Choose an episode</h2>
+          <p id="graph-summary" class="muted">Replay compares the graph immediately before its first opening with the graph at its durable completion.</p>
+        </div>
+        <div class="toolbar-actions">
+          <label class="delta-toggle">
+            <input id="emphasize-delta" type="checkbox" checked>
+            Emphasize delta
+          </label>
+          <button id="replay" class="primary" disabled>Replay episode delta</button>
+          <button id="show-head">Show seed head</button>
+        </div>
+      </div>
+      <div id="legend" class="legend" aria-label="Graph delta legend. Color is supplementary; symbols, node shapes, and edge patterns identify every state.">
+        <span><i class="added">+</i><span><strong>Added</strong> · hexagon / thick edge</span></span>
+        <span><i class="changed">~</i><span><strong>Changed</strong> · square / dashed edge</span></span>
+        <span><i class="unchanged">=</i><span><strong>Unchanged</strong> · circle / thin edge</span></span>
+        <span><i class="removed">×</i><span><strong>Removed</strong> · crossed circle / dotted edge</span></span>
+        <span><i class="query-ineligible">⊘</i><span><strong>Not query-eligible</strong> · dimmed</span></span>
+        <span><i class="inferred">I</i><span><strong>Inferred</strong> · double-dash edge and [I] label</span></span>
+      </div>
+      <section id="formation-audit" class="formation-audit" aria-labelledby="formation-audit-title" hidden>
+        <div class="formation-audit-heading">
+          <div>
+            <p class="eyebrow">PROPOSAL → ADMISSION</p>
+            <h2 id="formation-audit-title">Formation receipts</h2>
+          </div>
+          <span id="formation-audit-summary" class="count"></span>
+        </div>
+        <div id="formation-attempts" class="formation-attempts"></div>
+      </section>
+      <section id="case-controls" class="formation-audit" hidden aria-label="Checkpoint case controls">
+        <label>Run mode <select id="case-mode"><option value="recorded">Recorded replay — offline</option><option value="counterfactual">Synthetic edited response — offline</option></select></label>
+        <label>Response phase <select id="case-phase"><option value="">Choose a phase</option></select></label>
+        <button id="plan-phase" type="button">Estimate fresh selected phase — no send</button>
+        <label>Confirm request digest <input id="fresh-confirm-digest" maxlength="64" placeholder="Paste the 64-character planned digest"></label>
+        <label>Reservation ID <input id="fresh-reservation-id" maxlength="256" placeholder="Unique attempt ID"></label>
+        <button id="execute-phase" type="button" disabled>Execute exactly this phase — 1 provider call</button>
+        <label><input id="stop-at-phase" type="checkbox"> Stop immediately after this phase</label>
+        <label><input id="compare-recorded" type="checkbox"> Compare with recorded replay</label>
+        <label><input id="expect-no-change" type="checkbox"> Require no unexpected change</label>
+        <label><input id="save-query-with-run" type="checkbox"> Include current search and exact audit in replay comparison</label>
+        <label>Comparison version <select id="comparison-version"><option value="candidate">Candidate</option><option value="baseline">Recorded baseline</option></select></label>
+        <label>Query graph <select id="case-side"><option value="after">After run</option><option value="before">Before run (baseline)</option></select></label>
+        <details><summary>Selected phase response (editable for synthetic mode)</summary>
+          <textarea id="case-response" rows="10" aria-label="Synthetic phase response JSON" spellcheck="false"></textarea>
+        </details>
+        <button id="case-trace" type="button">Show complete run and admission trace</button>
+        <label>Saved run ID <input id="saved-run-id" maxlength="24" placeholder="24-character run ID"></label>
+        <button id="reopen-run" type="button">Reopen saved result — no replay</button>
+        <button id="verify-run" type="button">Check saved run against case expectations — no replay</button>
+        <label>Baseline saved run ID <input id="baseline-run-id" maxlength="24" placeholder="Earlier code version's run ID"></label>
+        <button id="compare-saved" type="button">Compare saved baseline with saved run — no replay</button>
+        <p id="fresh-execution-status" class="muted">Fresh execution is disabled unless the server starts with a sealed shared budget and explicit execution switch.</p>
+        <p class="muted">Saved checkpoint · 30-second run deadline · no historical rebuild. Queries reuse the last run. Synthetic changes are not model output.</p>
+      </section>
+      <div class="stage">
+        <svg id="graph" role="img" aria-label="Episode knowledge graph delta"></svg>
+        <div id="empty-state" class="empty-state">Select a completed episode to inspect its durable graph delta, or open the immutable seed head.</div>
+      </div>
+    </section>
+
+    <aside class="query-panel">
+      <div class="panel-heading">
+        <div><p class="eyebrow">PRODUCTION QUERY SHAPE</p><h2>Search</h2></div>
+        <span id="query-cutoff" class="count">head</span>
+      </div>
+      <form id="query-form">
+        <label>Natural-language query
+          <input id="query" maxlength="1000" placeholder="pets, projects, prior conditions…">
+        </label>
+        <label>Exact identity audit
+          <textarea id="exact-queries" rows="3" maxlength="2000" placeholder="One name per line"></textarea>
+        </label>
+        <div class="two-column">
+          <label>Direction<select id="direction"><option>both</option><option>outgoing</option><option>incoming</option></select></label>
+          <label>Depth<select id="depth"><option>0</option><option selected>1</option><option>2</option><option>3</option></select></label>
+        </div>
+        <div class="two-column">
+          <label>Evidence<select id="evidence"><option value="verified">verified</option><option value="inferred">verified + reviewed inference</option><option value="all">all assertion evidence</option></select></label>
+          <label>Max paths<select id="paths"><option>5</option><option selected>12</option><option>20</option></select></label>
+        </div>
+        <button class="primary" type="submit">Run real pAI query</button>
+      </form>
+      <div id="suggestions" class="suggestions"></div>
+      <div id="query-summary" class="query-summary muted">Queries execute against the selected replay cutoff without provider calls or writes.</div>
+      <div id="details" class="details"><pre>Select a node, edge, or run a query to inspect its exact result.</pre></div>
+    </aside>
+  </main>
+</body>
+</html>

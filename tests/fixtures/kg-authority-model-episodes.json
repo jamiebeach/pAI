@@ -1,0 +1,20 @@
+{
+  "source_kind": "synthetic-controlled",
+  "cases": [
+    {"case_id": "initial-cat", "timestamp": 3990000000, "sources": [
+      {"source_id": "utterance:first", "speaker_id": "operator", "kind": "original-utterance", "text": "I own one cat. Her name is Mina."}
+    ]},
+    {"case_id": "same-cat", "timestamp": 3990000060, "sources": [
+      {"source_id": "utterance:second", "speaker_id": "operator", "kind": "original-utterance", "text": "Mina is the same cat I mentioned earlier, not another cat. I still own her."}
+    ]},
+    {"case_id": "correct-name", "timestamp": 3990000120, "sources": [
+      {"source_id": "utterance:third", "speaker_id": "operator", "kind": "original-utterance", "text": "I gave you the wrong spelling for my cat's name. Her name is Mira, not Mina. Please correct the stored name; she has not changed her name."}
+    ]}
+  ],
+  "queries": [
+    {"query": "Mira", "expected_count": 1, "expected_object_label": "Mira"},
+    {"query": "cat", "expected_count": 1, "expected_object_label": "Mira"},
+    {"query": "Mina", "expected_count": 0, "expected_object_label": null},
+    {"query": "tea", "expected_count": 0, "expected_object_label": null}
+  ]
+}

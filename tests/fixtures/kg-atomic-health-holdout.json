@@ -1,0 +1,24 @@
+{
+  "source_kind": "synthetic-controlled",
+  "cases": [
+    {"case_id": "distinct-pets", "timestamp": 3994000000, "sources": [
+      {"source_id": "atomic:1", "speaker_id": "operator", "kind": "original-utterance", "text": "I own a dog named Maple and a cat named Cedar. Maple and Cedar are two different animals."}
+    ]},
+    {"case_id": "supported-health", "timestamp": 3994000120, "sources": [
+      {"source_id": "atomic:2", "speaker_id": "operator", "kind": "original-utterance", "text": "For my health notes: I have diagnosed migraine and a diagnosed pollen allergy. These are two separate medical conditions I have, not conditions of either pet."}
+    ]},
+    {"case_id": "assistant-unsupported-health", "timestamp": 3994000360, "sources": [
+      {"source_id": "atomic:3", "speaker_id": "active-persona", "kind": "prior-agent-utterance", "text": "Perhaps the operator has asthma as well. That is my speculation, not something the operator said or a confirmed diagnosis."}
+    ]}
+  ],
+  "queries": [
+    {"query": "dog", "expected_count": 1, "expected_object_label": "Maple"},
+    {"query": "cat", "expected_count": 1, "expected_object_label": "Cedar"},
+    {"query": "migraine", "expected_count": 1, "expected_object_label": "migraine"},
+    {"query": "pollen allergy", "expected_count": 1, "expected_object_label": "pollen allergy"},
+    {"query": "health", "expected_count": 2, "expected_object_label": null},
+    {"query": "headaches", "expected_count": 1, "expected_object_label": "migraine"},
+    {"query": "asthma", "expected_count": 0, "expected_object_label": null},
+    {"query": "astronomy", "expected_count": 0, "expected_object_label": null}
+  ]
+}

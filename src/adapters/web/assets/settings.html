@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>pAI Runtime Settings</title>
+<script src="/app-shell.js" defer></script>
+<script src="/viewport.js" defer></script>
+<script src="/settings.js" defer></script>
+<style>
+:root{--bg:#0b0f14;--panel:#10151c;--panel2:#151c25;--border:#223042;--text:#e6edf3;--dim:#8b98a5;--accent:#5fb3ff;--good:#55d6a0;--warn:#f5c76b;--bad:#ff7b88;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--mono)}header{position:sticky;top:0;z-index:20;padding:calc(8px + env(safe-area-inset-top)) 14px 8px;border-bottom:1px solid var(--border);background:rgba(11,15,20,.95);display:flex;justify-content:space-between;align-items:center}h1{font-size:13px;margin:0;color:var(--dim)}main{width:min(1200px,100%);margin:auto;padding:14px}.intro{color:var(--dim);font:12px/1.55 var(--mono);margin:0 0 12px}.status{padding:9px 11px;border:1px solid var(--border);border-radius:7px;background:var(--panel);margin-bottom:12px;font-size:11px}.settings{display:grid;gap:8px}.setting{display:grid;grid-template-columns:minmax(230px,1.2fr) minmax(210px,.8fr) minmax(180px,.7fr);gap:12px;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:11px}.name{color:var(--accent);font-size:12px}.description,.meta{color:var(--dim);font-size:10px;line-height:1.45;margin-top:4px}.pending{color:var(--warn)}.error{color:var(--bad)}input,select,button{width:100%;font:12px var(--mono);background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px}button{cursor:pointer;color:var(--accent)}button:hover{border-color:var(--accent)}.effective{font-size:11px;overflow-wrap:anywhere}@media(max-width:760px){.setting{grid-template-columns:1fr}.effective{border-top:1px solid var(--border);padding-top:8px}}
+</style>
+</head>
+<body><header><h1>PAI SETTINGS</h1><div class="btns"></div></header><main>
+<section class="status" aria-label="Appearance">
+  <h2 style="font-size:14px;margin-top:0">Appearance</h2>
+  <p>Terminal and file text size. Saved on this device.</p>
+  <div style="display:flex;gap:8px;align-items:center;max-width:360px">
+    <button id="font-smaller" aria-label="Decrease text size" style="min-height:44px">A−</button>
+    <output id="font-size" style="white-space:nowrap" aria-live="polite"></output>
+    <button id="font-larger" aria-label="Increase text size" style="min-height:44px">A+</button>
+    <button id="font-reset" style="min-height:44px">Reset</button>
+  </div>
+  <p style="font-size:var(--pai-text-size,14px);line-height:1.5">The quick brown fox jumps over the lazy dog.</p>
+</section>
+<p class="intro">These are durable operator settings reconstructed from the event ledger. Immediate and next-boundary changes affect the running pAI. Restart settings are saved now and clearly remain pending until restart. Credentials, state/database paths, and one-shot migration actions are intentionally excluded.</p>
+<div id="status" class="status">Loading current settings…</div><div id="settings" class="settings"></div>
+</main></body></html>

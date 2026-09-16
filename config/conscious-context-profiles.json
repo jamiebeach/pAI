@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "solicited-conversation-dev": {
+      "profile_id": "solicited-conversation-dev",
+      "revision": 5,
+      "max_input_characters": 8000,
+      "history_max_events": 100,
+      "history_character_budget": 48000,
+      "history_event_character_limit": 4000,
+      "history_target_estimated_tokens": 12000,
+      "history_min_recent_events": 24,
+      "memory_max_results": 4,
+      "memory_record_character_limit": 800,
+      "graph_context_character_budget": 1600,
+      "tool_result_wrapper_characters_per_record": 192,
+      "memory_provider_classes": ["local", "remote-zdr"],
+      "total_character_budget": 72000,
+      "section_character_budgets": {
+        "identity-instructions": 5000,
+        "sensorium": 1000,
+        "focus-lifecycles": 8000,
+        "triggering-stimuli": 8000,
+        "conversation-evidence": 48000,
+        "memory-bundles": 3200,
+        "untrusted-tool-results": 13200,
+        "tools-proposal-schema": 4000,
+        "publication-constraints": 2000
+      }
+    },
+    "solicited-conversation-small": {
+      "profile_id": "solicited-conversation-small",
+      "revision": 2,
+      "max_input_characters": 8000,
+      "history_max_events": 12,
+      "history_character_budget": 6000,
+      "history_event_character_limit": 4000,
+      "history_target_estimated_tokens": 1500,
+      "history_min_recent_events": 12,
+      "memory_max_results": 4,
+      "memory_record_character_limit": 800,
+      "graph_context_character_budget": 1600,
+      "tool_result_wrapper_characters_per_record": 192,
+      "memory_provider_classes": ["local", "remote-zdr"],
+      "total_character_budget": 24000,
+      "section_character_budgets": {
+        "identity-instructions": 5000,
+        "sensorium": 1000,
+        "focus-lifecycles": 1000,
+        "triggering-stimuli": 8000,
+        "conversation-evidence": 12000,
+        "memory-bundles": 3200,
+        "untrusted-tool-results": 13200,
+        "tools-proposal-schema": 4000,
+        "publication-constraints": 2000
+      }
+    },
+    "context-lab": {
+      "profile_id": "context-lab",
+      "revision": 3,
+      "max_input_characters": 65536,
+      "history_max_events": 128,
+      "history_character_budget": 20000,
+      "history_event_character_limit": 8000,
+      "history_target_estimated_tokens": 5000,
+      "history_min_recent_events": 24,
+      "memory_max_results": 6,
+      "memory_record_character_limit": 1000,
+      "graph_context_character_budget": 2500,
+      "tool_result_wrapper_characters_per_record": 192,
+      "memory_provider_classes": ["local", "remote-zdr"],
+      "total_character_budget": 20000,
+      "section_character_budgets": {
+        "identity-instructions": 6000,
+        "sensorium": 6000,
+        "focus-lifecycles": 6000,
+        "triggering-stimuli": 6000,
+        "conversation-evidence": 6000,
+        "memory-bundles": 6000,
+        "untrusted-tool-results": 13200,
+        "tools-proposal-schema": 6000,
+        "publication-constraints": 6000
+      }
+    }
+  }
+}

@@ -1,0 +1,68 @@
+;;;; harness: bare
+(load (merge-pathnames "context-graph-full-source-candidates-tests.lisp" *load-truename*))
+(in-package :pai.context-graph)
+
+(let* ((ontology (gethash "ontology" (as-fixture))) (graph (make-context-graph ontology))
+       (episode (sm-episode "window-capacity" "Original source." 100)))
+  (multiple-value-bind (seed ignored) (lab-authority-context graph episode 0)
+    (declare (ignore ignored))
+    (dotimes (i 60)
+      (%cg-authority-new-entity graph
+        (%cg-object "local_ref" (format nil "candidate-~d" i) "kind" "organism"
+                    "label" (format nil "Creature~d" i) "aliases" #() "classifications" #())
+        seed #() (make-hash-table :test #'equal)))
+    (setf (context-graph-entity-scan-index graph)
+          (coerce (sort (loop for id being the hash-keys of (context-graph-entities graph) collect id) #'string<) 'vector)
+          (context-graph-projection-digest graph) nil))
+  (setf (gethash "sources" episode)
+        (coerce (loop for i below 6 collect
+          (%cg-object "source_id" (format nil "window-source:~d" i) "speaker_id" "operator"
+                      "kind" "original-utterance" "text"
+                      (format nil "Mentioned: ~{~a~^, ~}."
+                        (loop for j from (* i 10) below (* (1+ i) 10) collect (format nil "Creature~d" j))))) 'vector))
+  (multiple-value-bind (full ignored) (lab-authority-context graph episode 1)
+    (declare (ignore ignored))
+    (let* ((before (%cg-authority-watermark graph "lab-agent" "lab-persona"))
+           (original (%cg-authority-canonical-json full))
+           (plan (%cgro-plan-identity-windows graph full 0))
+           (rows (gethash "windows" plan)))
+      (assert (sm-error (lambda () (%cgro-batch-context graph full 0 "staged" "bounded-v4")) "IDENTITY_CANDIDATE_LIMIT"))
+      (assert (= 2 (length rows)))
+      (assert (= 3 (gethash "candidate_checks" plan)))
+      (assert (every (lambda (r) (equal "capacity-ready" (gethash "status" r))) rows))
+      (assert (equalp #(0 3) (map 'vector (lambda (r) (gethash "focus_start" r)) rows)))
+      (assert (equalp #(3 6) (map 'vector (lambda (r) (gethash "focus_end" r)) rows)))
+      (assert (equalp #(0 2) (map 'vector (lambda (r) (gethash "context_start" r)) rows)))
+      (assert (equalp #(4 6) (map 'vector (lambda (r) (gethash "context_end" r)) rows)))
+      (assert (%cg-authority-equal-p (gethash "primary_source_ids" full)
+        (apply #'concatenate 'vector (map 'list (lambda (r) (gethash "focus_source_ids" r)) rows))))
+      (assert (%cg-authority-equal-p plan (%cgro-plan-identity-windows graph full 0)))
+      (assert (equal original (%cg-authority-canonical-json full)))
+      (assert (%cg-authority-equal-p before (%cg-authority-watermark graph "lab-agent" "lab-persona")))
+      ;; No accidental executable context; this is capacity evidence only.
+      (assert (null (gethash "source_packet" plan)))
+      (assert (sm-error (lambda () (%cgro-plan-identity-windows graph full 99)) "RUNTIME_BATCH_INDEX_INVALID"))
+      (let ((tampered (%cg-detach full)))
+        (setf (gethash "text" (aref (gethash "sources" (gethash "source_packet" tampered)) 0)) "Forged text.")
+        (assert (sm-error (lambda () (%cgro-plan-identity-windows graph tampered 0)) "SOURCE_INVALID")))
+      (let ((small (%cg-detach full)))
+        (setf (gethash "sources" (gethash "source_packet" small))
+              (subseq (gethash "sources" (gethash "source_packet" small)) 0 1))
+        (let ((fit (%cgro-plan-identity-windows graph small 0)))
+          (assert (= 1 (gethash "candidate_checks" fit)))
+          (assert (= 1 (length (gethash "windows" fit))))
+          (assert (equal "capacity-ready" (gethash "status" (aref (gethash "windows" fit) 0))))))
+      ;; A short reply retains its preceding utterance even if it causes overflow.
+      (let* ((copy (%cg-detach episode))
+             (sources (gethash "sources" copy))
+             (question (%cg-detach (aref sources 0)))
+             (reply (%cg-detach (aref sources 1))))
+        (setf (gethash "text" question) (format nil "Which of these? ~{~a~^ ~}"
+               (loop for i below 60 collect (format nil "Creature~d" i)))
+              (gethash "text" reply) "Yes."
+              (gethash "sources" copy) (vector question reply))
+        (let ((blocked (gethash "windows" (%cgro-plan-identity-windows graph (lab-authority-context graph copy 1) 0))))
+          (assert (= 2 (length blocked)))
+          (assert (every (lambda (r) (and (equal "blocked" (gethash "status" r))
+                                        (= 2 (length (gethash "context_source_ids" r))))) blocked)))))))
+(format t "IDENTITY-WINDOW deterministic capacity split, exact focus coverage, adjacent context, unchanged state and unsafe reply refusal passed~%")

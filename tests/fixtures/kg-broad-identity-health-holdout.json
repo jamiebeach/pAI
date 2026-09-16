@@ -1,0 +1,47 @@
+{
+  "source_kind": "synthetic-controlled",
+  "cases": [
+    {"case_id": "distinct-pets", "timestamp": 3994000000, "sources": [
+      {"source_id": "broad:1", "speaker_id": "operator", "kind": "original-utterance", "text": "I own a dog named Maple and a cat named Cedar. Maple and Cedar are two different animals."}
+    ]},
+    {"case_id": "explicit-reuse", "timestamp": 3994000060, "sources": [
+      {"source_id": "broad:2", "speaker_id": "operator", "kind": "original-utterance", "text": "The dog Maple I mentioned earlier is the same dog I own, not a second dog. Cedar is still my cat. I am repeating their names so there is no confusion."}
+    ]},
+    {"case_id": "supported-health", "timestamp": 3994000120, "sources": [
+      {"source_id": "broad:3", "speaker_id": "operator", "kind": "original-utterance", "text": "For my health notes: I have diagnosed migraine and a diagnosed pollen allergy. These are two separate medical conditions I have, not conditions of either pet."}
+    ]},
+    {"case_id": "same-label-different-kind", "timestamp": 3994000180, "sources": [
+      {"source_id": "broad:4", "speaker_id": "operator", "kind": "original-utterance", "text": "I use a backup application named Cedar. The application and my cat share the name Cedar but are completely different things. This is software, not another name for my cat."}
+    ]},
+    {"case_id": "hypothesis-not-diagnosis", "timestamp": 3994000240, "sources": [
+      {"source_id": "broad:5", "speaker_id": "operator", "kind": "original-utterance", "text": "Could diabetes ever explain tiredness? This is a general hypothetical question. I am not saying I have diabetes or that I have been diagnosed with it."}
+    ]},
+    {"case_id": "ambiguous-pet-name", "timestamp": 3994000300, "sources": [
+      {"source_id": "broad:6", "speaker_id": "operator", "kind": "original-utterance", "text": "Someone suggested one of my pets should be called Birch. I have not accepted the suggestion and I am not identifying which pet. Neither pet has changed its name."}
+    ]},
+    {"case_id": "assistant-unsupported-health", "timestamp": 3994000360, "sources": [
+      {"source_id": "broad:7", "speaker_id": "active-persona", "kind": "prior-agent-utterance", "text": "Perhaps the operator has asthma as well. That is my speculation, not something the operator said or a confirmed diagnosis."}
+    ]},
+    {"case_id": "unrelated-distractor", "timestamp": 3994000420, "sources": [
+      {"source_id": "broad:8", "speaker_id": "operator", "kind": "original-utterance", "text": "I own a bicycle named Comet. Comet is a bicycle, not an animal, medical condition or software application."}
+    ]}
+  ],
+  "queries": [
+    {"query": "MAPLE", "expected_count": 1, "expected_object_label": "Maple"},
+    {"query": "dog", "expected_count": 1, "expected_object_label": "Maple"},
+    {"query": "cat", "expected_count": 1, "expected_object_label": "Cedar"},
+    {"query": "Cedar", "expected_count": 2, "expected_object_label": "Cedar"},
+    {"query": "backup application", "expected_count": 1, "expected_object_label": "Cedar"},
+    {"query": "migraine", "expected_count": 1, "expected_object_label": "migraine"},
+    {"query": "pollen allergy", "expected_count": 1, "expected_object_label": "pollen allergy"},
+    {"query": "health", "expected_count": 2, "expected_object_label": null},
+    {"query": "headaches", "expected_count": 1, "expected_object_label": "migraine"},
+    {"query": "medical conditions", "expected_count": 2, "expected_object_label": null},
+    {"query": "Comet", "expected_count": 1, "expected_object_label": "Comet"},
+    {"query": "diabetes", "expected_count": 0, "expected_object_label": null},
+    {"query": "asthma", "expected_count": 0, "expected_object_label": null},
+    {"query": "Birch", "expected_count": 0, "expected_object_label": null},
+    {"query": "astronomy", "expected_count": 0, "expected_object_label": null},
+    {"query": "jasmine tea", "expected_count": 0, "expected_object_label": null}
+  ]
+}

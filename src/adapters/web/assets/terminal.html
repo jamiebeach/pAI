@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/pwa-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/pwa-icon.svg">
+<title>the agent Terminal</title>
+<script src="/app-shell.js" defer></script>
+<script src="/viewport.js" defer></script>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #10151c; --border: #223042; --text: #e6edf3;
+    --dim: #8b98a5; --thinking: #6b7785; --accent: #5fb3ff; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100vh; margin: 0; overflow: hidden; overscroll-behavior: none; background: var(--bg); color: var(--text); font-family: var(--mono); }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+  header { padding: calc(8px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 8px calc(14px + env(safe-area-inset-left)); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; min-width: 0; }
+  header h1 { font-size: 13px; margin: 0; color: var(--dim); font-weight: 600; letter-spacing: .03em; }
+  header .btns button { background: none; border: 1px solid var(--border); color: var(--dim); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-left: 6px; font-family: var(--mono); }
+  header .btns button:hover { color: var(--text); border-color: var(--accent); }
+  #operational-shelf { display: none; flex-shrink: 0; padding: 7px 14px; color: #ffd27a; background: #241b0d; border-bottom: 1px solid #6b4d1e; font-size: 11px; line-height: 1.4; }
+  #operational-shelf.visible { display: flex; gap: 10px; align-items: center; }
+  #operational-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+  #operational-dismiss { border: 0; background: none; color: #ffd27a; cursor: pointer; font: inherit; opacity: .75; }
+  #activity-anchor { position: relative; z-index: 5; height: 0; flex: 0 0 0; }
+  #activity-shelf { position: absolute; top: 8px; left: 14px; right: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none; }
+  .ambient-item { width: min(760px, 100%); max-height: 72px; overflow: hidden; white-space: pre-wrap; word-break: break-word; color: var(--dim); background: rgba(16,21,28,.96); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; font-size: 11px; line-height: 1.35; box-shadow: 0 5px 18px rgba(0,0,0,.28); opacity: .92; transform: translateY(0); transition: opacity .4s ease, transform .4s ease, max-height .4s ease, margin .4s ease, padding .4s ease, border-width .4s ease; }
+  .ambient-item::before { content: 'private activity \00b7  '; color: var(--accent); opacity: .75; }
+  .ambient-item.entering { opacity: 0; transform: translateY(-6px); }
+  .ambient-item.leaving { opacity: 0; transform: translateY(-6px); max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
+  @media (prefers-reduced-motion: reduce) { .ambient-item { transition: opacity .15s linear; } }
+  #transcript { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior-y: contain; padding: 14px calc(16px + env(safe-area-inset-right)) 14px calc(16px + env(safe-area-inset-left)); font-size: 13px; line-height: 1.5; }
+  #transcript { overflow-anchor:none; }
+  #latest { align-self:center; border:1px solid var(--border); border-radius:16px; padding:7px 14px; margin:4px; background:var(--panel); color:var(--accent); cursor:pointer; }
+  #latest[hidden] { display:none; }
+  #loadmore { display: block; margin: 0 auto 12px; background: none; border: 1px solid var(--border); color: var(--dim); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; }
+  .ev { margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+  .ev.user { color: var(--text); font-weight: 600; }
+  .ev.user::before { content: '> '; color: var(--accent); }
+  .ev.user.local-queued { opacity: .66; font-weight: 500; }
+  .queue-status { margin: 3px 0 0 15px; color: var(--thinking); font-size: 10.5px; font-weight: 400; }
+  .ev.thinking { color: var(--thinking); font-size: 11.5px; opacity: .8; }
+  .ev.stream-progress { color: var(--thinking); font-size: 11.5px; opacity: .9; }
+  .ev.tool { color: var(--thinking); font-size: 11.5px; background: #05080b; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  .ev.command { color: var(--text); font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; background: #05080b; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; text-align: left; }
+  .ev.final { color: var(--text); font-size: 14px; border-left: 3px solid var(--accent); padding-left: 10px; }
+  .ev.image img { max-width: 100%; max-height: 480px; border-radius: 6px; border: 1px solid var(--border); }
+  .ev.system, .ev.error, .ev.accepted, .ev.queued { text-align: center; color: var(--dim); font-size: 11px; opacity: .7; }
+  .ev.error { color: #ff8080; }
+  .ev :is(h1,h2,h3) { margin: .4em 0 .2em; }
+  .ev p { margin: .3em 0; }
+  .ev code { background: #05080b; padding: 1px 4px; border-radius: 3px; }
+  .ev pre { background: #05080b; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; overflow-x: auto; }
+  .ev a { color: var(--accent); }
+  .tok-comment { color: #6a9955; } .tok-string { color: #ce9178; } .tok-keyword { color: #c586c0; } .tok-paren { color: #808080; }
+  #inputbar { flex-shrink: 0; display: flex; flex-direction: column; padding: 10px calc(14px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left)); border-top: 1px solid var(--border); background: var(--panel); }
+  #pending-images { display: none; gap: 6px; margin-bottom: 6px; }
+  #pending-images.has-items { display: flex; }
+  #pending-images .thumb { position: relative; }
+  #pending-images .thumb img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+  #pending-images .thumb button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #c0392b; color: #fff; border: none; cursor: pointer; font-size: 11px; line-height: 1; padding: 0; }
+  #inputrow { display: flex; gap: 8px; }
+  #attachbtn { background: none; border: 1px solid var(--border); color: var(--dim); border-radius: 8px; cursor: pointer; padding: 0 14px; font-size: 16px; }
+  #attachbtn:hover { color: var(--text); border-color: var(--accent); }
+  #inputbar textarea { flex: 1; resize: none; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 13px; max-height: 200px; }
+  #inputbar textarea:focus { outline: none; border-color: var(--accent); }
+  #inputrow button#send { background: var(--accent); border: none; color: #04121e; padding: 0 18px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+  #inputrow button:disabled { opacity: .5; cursor: default; }
+  .modal { position: fixed; inset: 0; padding: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left)); background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 10; }
+  .modal.open { display: flex; }
+  .modal .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: min(90vw, 1100px); height: min(82vh, calc(100% - 16px)); min-height: 0; display: flex; overflow: hidden; }
+  .fm-list { width: 280px; border-right: 1px solid var(--border); overflow-y: auto; padding: 8px; }
+  .fm-list .crumb { font-size: 11px; color: var(--dim); margin-bottom: 8px; word-break: break-all; }
+  .fm-list .entry { padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .fm-list .entry:hover { background: #1c2b3a; }
+  .fm-list .entry.dir::before { content: '\1F4C1 '; }
+  .fm-list .entry.file::before { content: '\1F4C4 '; }
+  .fm-edit { flex: 1; display: flex; flex-direction: column; padding: 10px; }
+  .fm-edit .path { font-size: 11px; color: var(--dim); margin-bottom: 6px; }
+  .fm-edit textarea { flex: 1; background: #05080b; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-family: var(--mono); font-size: 12px; }
+  .fm-edit .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .fm-edit button, .fm-edit input[type=file] { font-family: var(--mono); font-size: 12px; }
+  .fm-edit button { background: var(--accent); border: none; color: #04121e; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+  #fm-close { position: absolute; top: 0; right: 0; width:44px; height:44px; background:var(--panel); border: none; color: var(--text); font-size: 24px; cursor: pointer; }
+  .fm-edit { min-width:0; }
+  .fm-edit textarea { min-height:40px; resize:none; }
+  .fm-edit .path { padding-right:36px; overflow-wrap:anywhere; }
+  .fm-list .entry { display:block; width:100%; text-align:left; background:none; color:var(--text); border:0; min-height:36px; overflow-wrap:anywhere; }
+  .fm-list .crumb { padding-right:36px; }
+  #fm-permission { margin:0 0 6px; font-size:11px; color:var(--dim); }
+  #fm-download { color:var(--accent); padding:8px; }
+  #fm-download[hidden] { display:none; }
+  .fm-edit button:disabled { opacity:.45; cursor:default; }
+  #transcript { font-size:calc(13px * var(--pai-text-scale,1)); }
+  .ev.final { font-size:var(--pai-text-size,14px); }
+  .ev.thinking,.ev.stream-progress,.ev.tool { font-size:calc(11.5px * var(--pai-text-scale,1)); }
+  .ev.command,.fm-edit textarea,.fm-list .entry { font-size:calc(12px * var(--pai-text-scale,1)); }
+  #inputbar textarea { font-size:var(--pai-text-size,14px); }
+  @media (pointer:coarse) { #inputbar textarea,.fm-edit textarea { font-size:max(16px,var(--pai-text-size,14px)); } }
+  @media (max-width: 700px) {
+    header h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header .btns { flex-shrink: 0; }
+    #transcript { padding-top: 10px; padding-bottom: 10px; }
+    #inputbar textarea, .fm-edit textarea { min-width: 0; font-size: max(16px,var(--pai-text-size,14px)); }
+    #attachbtn { padding: 0 11px; }
+    #inputrow button#send { padding: 0 13px; }
+    .modal .panel { width: 100%; height: 100%; flex-direction: column; border-radius: 8px; }
+    .fm-list { width: 100%; height: 34%; min-height: 120px; border-right: 0; border-bottom: 1px solid var(--border); }
+    .fm-edit { min-height: 0; }
+    .fm-edit .row { flex-wrap: wrap; }
+    .fm-edit input[type=file] { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>PAI TERMINAL</h1>
+    <div class="btns"></div>
+  </header>
+  <div id="operational-shelf" role="status" aria-live="polite">
+    <span id="operational-text"></span><button id="operational-dismiss" title="Dismiss this notice">dismiss</button>
+  </div>
+  <div id="activity-anchor"><div id="activity-shelf" aria-live="polite" aria-label="Private agent activity"></div></div>
+  <div id="transcript">
+    <button id="loadmore" style="display:none">Load older</button>
+  </div>
+  <div id="inputbar">
+    <button id="latest" type="button" hidden>Jump to latest</button>
+    <div id="pending-images"></div>
+    <div id="inputrow">
+      <input type="file" id="attach-input" accept="image/*" multiple style="display:none">
+      <button id="attachbtn" title="Attach image">&#128206;</button>
+      <textarea id="input" rows="1" placeholder="Message the agent... (Shift+Enter for newline, paste or attach an image)"></textarea>
+      <button id="send">Send</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="filemodal" role="dialog" aria-modal="true" aria-label="Workspace files">
+  <div class="panel" style="position:relative">
+    <button id="fm-close" aria-label="Close files">&times;</button>
+    <div class="fm-list" id="fm-list"><div class="crumb" id="fm-crumb">workspace</div></div>
+    <div class="fm-edit">
+      <div class="path" id="fm-path">No file open</div>
+      <p id="fm-permission"></p>
+      <textarea id="fm-textarea" aria-label="File contents" spellcheck="false" readonly></textarea>
+      <div class="row">
+        <button id="fm-save" disabled>Save</button>
+        <a id="fm-download" hidden>Download</a>
+        <span id="fm-status" role="status" style="font-size:11px;color:var(--dim)"></span>
+        <span style="flex:1"></span>
+        <input type="file" id="fm-upload-input" aria-label="Choose a file to upload" disabled>
+        <button id="fm-upload-btn" disabled>Upload here</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const transcriptEl = document.getElementById('transcript');
+const appEl = document.getElementById('app');
+const activityShelfEl = document.getElementById('activity-shelf');
+const operationalShelfEl = document.getElementById('operational-shelf');
+const operationalTextEl = document.getElementById('operational-text');
+const loadMoreEl = document.getElementById('loadmore');
+const inputEl = document.getElementById('input');
+const sendEl = document.getElementById('send');
+let lastId = 0, oldestId = null, MAX_DOM = 400;
+const AMBIENT_VISIBLE_MS = 6500, MAX_AMBIENT = 5;
+const latestEl = document.getElementById('latest');
+let followingLatest = true, readingPosition = null;
+
+function captureReadingPosition() {
+  const top = transcriptEl.getBoundingClientRect().top;
+  const node = Array.from(transcriptEl.querySelectorAll('.ev'))
+    .find(row => row.getBoundingClientRect().bottom > top + 1);
+  return {node, offset:node ? node.getBoundingClientRect().top - top : 0, scrollTop:transcriptEl.scrollTop};
+}
+function restoreReadingPosition() {
+  if (followingLatest) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  else if (readingPosition) {
+    if (readingPosition.node?.isConnected) {
+      transcriptEl.scrollTop += readingPosition.node.getBoundingClientRect().top -
+        transcriptEl.getBoundingClientRect().top - readingPosition.offset;
+    } else transcriptEl.scrollTop = readingPosition.scrollTop;
+  }
+  readingPosition = captureReadingPosition();
+}
+function updateTranscript(change) {
+  if (!followingLatest) readingPosition = captureReadingPosition();
+  change();
+  restoreReadingPosition();
+}
+function jumpToLatest() {
+  followingLatest = true;
+  latestEl.hidden = true;
+  pruneDom();
+  restoreReadingPosition();
+}
+latestEl.addEventListener('click', jumpToLatest);
+transcriptEl.addEventListener('scroll', () => {
+  followingLatest = transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight <= 32;
+  latestEl.hidden = followingLatest;
+  readingPosition = captureReadingPosition();
+}, {passive:true});
+// Images, text size and keyboard/composer changes also resize existing rows.
+const transcriptResize = typeof ResizeObserver === 'function' ? new ResizeObserver(restoreReadingPosition) : null;
+if (transcriptResize) transcriptResize.observe(transcriptEl);
+function observeRow(row) { if (transcriptResize) transcriptResize.observe(row); }
+function removeRow(row) {
+  if (transcriptResize) transcriptResize.unobserve(row);
+  row.remove();
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+}
+
+function retireAmbient(node) {
+  if (!node || node.dataset.retiring) return;
+  node.dataset.retiring = '1';
+  node.classList.add('leaving');
+  setTimeout(() => node.remove(), 420);
+}
+
+function renderAmbient(ev) {
+  lastId = Math.max(lastId, ev.id);
+  const div = document.createElement('div');
+  div.className = 'ambient-item entering';
+  div.textContent = typeof ev.data === 'string' ? ev.data : (ev.data.status || 'private activity');
+  activityShelfEl.appendChild(div);
+  requestAnimationFrame(() => div.classList.remove('entering'));
+  if (activityShelfEl.children.length > MAX_AMBIENT) activityShelfEl.firstElementChild.remove();
+  setTimeout(() => retireAmbient(div), AMBIENT_VISIBLE_MS);
+}
+
+function renderOperational(ev) {
+  lastId = Math.max(lastId, ev.id);
+  operationalTextEl.textContent = typeof ev.data === 'string' ? ev.data : (ev.data.status || 'runtime anomaly observed');
+  operationalShelfEl.classList.add('visible');
+}
+
+function streamProgressKey(ev) {
+  const data = ev.data || {};
+  return String(data.generation_id || ev.turn_id || 'current');
+}
+
+function renderStreamProgress(ev) {
+  lastId = Math.max(lastId, ev.id);
+  const data = ev.data || {};
+  const key = streamProgressKey(ev);
+  if (data.private) {
+    let item = activityShelfEl.querySelector('[data-stream-key="' + CSS.escape(key) + '"]');
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'ambient-item entering';
+      item.dataset.streamKey = key;
+      activityShelfEl.appendChild(item);
+      requestAnimationFrame(() => item.classList.remove('entering'));
+    }
+    item.textContent = data.display || 'private cognition is streaming';
+    clearTimeout(item._retireTimer);
+    item._retireTimer = setTimeout(() => retireAmbient(item), AMBIENT_VISIBLE_MS);
+    return;
+  }
+  let row = transcriptEl.querySelector('.stream-progress[data-stream-key="' + CSS.escape(key) + '"]');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'ev stream-progress';
+    row.dataset.streamKey = key;
+    transcriptEl.appendChild(row);
+  }
+  row.textContent = data.display || 'pAI model response is streaming';
+  observeRow(row);
+  if (data.usage) setTimeout(() => updateTranscript(() => removeRow(row)), 2500);
+}
+
+document.getElementById('operational-dismiss').addEventListener('click', () => {
+  updateTranscript(() => operationalShelfEl.classList.remove('visible'));
+});
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function highlightLisp(escaped) {
+  const kw = /\b(defun|defvar|defparameter|let\*?|if|when|unless|cond|loop|lambda|setf|funcall|format|handler-case|error|progn|and|or|not|quote|t|nil)\b/g;
+  return escaped
+    .replace(/;.*$/gm, m => '<span class="tok-comment">' + m + '</span>')
+    .replace(/&quot;(?:[^&]|&(?!quot;))*?&quot;/g, m => '<span class="tok-string">' + m + '</span>')
+    .replace(kw, m => '<span class="tok-keyword">' + m + '</span>')
+    .replace(/[()]/g, m => '<span class="tok-paren">' + m + '</span>');
+}
+
+function renderMarkdown(raw) {
+  let text = escapeHtml(raw);
+  const blocks = [];
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => {
+    const hl = (!lang || /lisp/i.test(lang)) ? highlightLisp(code) : code;
+    blocks.push('<pre>' + hl + '</pre>');
+    return '\u0000' + (blocks.length - 1) + '\u0000';
+  });
+  text = text.replace(/^###### (.*)$/gm, '<h6>$1</h6>').replace(/^##### (.*)$/gm, '<h5>$1</h5>')
+             .replace(/^#### (.*)$/gm, '<h4>$1</h4>').replace(/^### (.*)$/gm, '<h3>$1</h3>')
+             .replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>');
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  text = text.replace(/\u0000(\d+)\u0000/g, (m, i) => blocks[+i]);
+  return text.split(/\n{2,}/).map(p => p.trim() ? ('<p>' + p.replace(/\n/g,'<br>') + '</p>') : '').join('');
+}
+
+function pruneDom() {
+  const nodes = transcriptEl.querySelectorAll('.ev');
+  if (nodes.length > MAX_DOM && followingLatest) {
+    for (let i = 0; i < nodes.length - MAX_DOM; i++) removeRow(nodes[i]);
+  }
+}
+
+function renderEvent(ev, prepend, durable = true) {
+  if (ev.type === 'ambient') { renderAmbient(ev); return; }
+  if (ev.type === 'operational') { renderOperational(ev); return; }
+  if (ev.type === 'stream-progress') { renderStreamProgress(ev); return; }
+  const div = document.createElement('div');
+  div.className = 'ev ' + ev.type;
+  div.dataset.id = ev.id;
+  if (durable && (oldestId === null || ev.id < oldestId)) oldestId = ev.id;
+  if (ev.type === 'image') {
+    const img = document.createElement('img');
+    img.src = ev.data.url; img.alt = ev.data.alt || '';
+    div.appendChild(img);
+  } else if (ev.type === 'tool') {
+    div.innerHTML = highlightLisp(escapeHtml(ev.data));
+  } else if (ev.type === 'user') {
+    const text = ev.data.text || '';
+    const localEcho = Array.from(transcriptEl.querySelectorAll('.local-queued'))
+      .find(node => node._queuedMessageText === text);
+    if (localEcho) removeRow(localEcho);
+    const t = document.createElement('div');
+    t.textContent = text;
+    div.appendChild(t);
+    (ev.data.images || []).forEach(url => {
+      const img = document.createElement('img');
+      img.src = url; img.loading = 'lazy';
+      img.style.cssText = 'max-width:260px;max-height:260px;border-radius:6px;border:1px solid var(--border);margin-top:6px;display:block';
+      div.appendChild(img);
+    });
+  } else if (ev.type === 'system' || ev.type === 'error' || ev.type === 'command') {
+    div.textContent = typeof ev.data === 'string' ? ev.data : (ev.data.status || ev.type);
+  } else if (ev.type === 'accepted' || ev.type === 'queued' || ev.type === 'thinking') {
+    div.textContent = ev.type === 'thinking' ? 'pAI is thinking…' : ('Message ' + ev.type + '.');
+  } else {
+    div.innerHTML = renderMarkdown(ev.data);
+  }
+  if (prepend) transcriptEl.insertBefore(div, transcriptEl.children[1] || null);
+  else transcriptEl.appendChild(div);
+  observeRow(div);
+  if (durable) lastId = Math.max(lastId, ev.id);
+}
+
+async function loadHistory() {
+  const res = await fetch('/api/v2/history?limit=200');
+  const data = await res.json();
+  data.events.forEach(ev => renderEvent(ev, false));
+  loadMoreEl.style.display = data.has_more ? 'block' : 'none';
+  jumpToLatest();
+  connectStream();
+}
+
+loadMoreEl.addEventListener('click', async () => {
+  if (oldestId === null) return;
+  loadMoreEl.disabled = true;
+  try {
+  const res = await fetch('/api/v2/history?before=' + oldestId + '&limit=200');
+  const data = await res.json();
+  // Capture after the fetch: reading may have moved while it was pending.
+  updateTranscript(() => {
+    data.events.slice().reverse().forEach(ev => renderEvent(ev, true));
+    loadMoreEl.style.display = data.has_more ? 'block' : 'none';
+  });
+  } catch (error) {
+    loadMoreEl.textContent = 'Could not load older messages · retry';
+  } finally { loadMoreEl.disabled = false; }
+});
+
+let es = null;
+function connectStream() {
+  if (es) es.close();
+  es = new EventSource('/api/v2/stream?since=' + lastId);
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    updateTranscript(() => { renderEvent(ev, false); pruneDom(); });
+  };
+  es.onerror = () => { es.close(); setTimeout(connectStream, 1500); };
+}
+
+function autoGrow() { updateTranscript(() => { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px'; }); }
+inputEl.addEventListener('input', autoGrow);
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+// --- image attach: file picker, paste, thumbnail preview ---
+const pendingImagesEl = document.getElementById('pending-images');
+const attachInput = document.getElementById('attach-input');
+let pendingImages = []; // array of data-URL strings
+
+function renderPendingImages() {
+  pendingImagesEl.innerHTML = '';
+  pendingImagesEl.classList.toggle('has-items', pendingImages.length > 0);
+  pendingImages.forEach((url, i) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    const img = document.createElement('img'); img.src = url;
+    const rm = document.createElement('button'); rm.textContent = '\u00d7';
+    rm.onclick = () => { pendingImages.splice(i, 1); renderPendingImages(); };
+    thumb.appendChild(img); thumb.appendChild(rm);
+    pendingImagesEl.appendChild(thumb);
+  });
+}
+
+function addImageFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = () => { pendingImages.push(reader.result); renderPendingImages(); };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById('attachbtn').addEventListener('click', () => attachInput.click());
+attachInput.addEventListener('change', () => {
+  Array.from(attachInput.files).forEach(addImageFile);
+  attachInput.value = '';
+});
+inputEl.addEventListener('paste', (e) => {
+  const items = Array.from(e.clipboardData ? e.clipboardData.items : []);
+  const imageItems = items.filter(it => it.kind === 'file' && it.type.startsWith('image/'));
+  if (imageItems.length) {
+    e.preventDefault();
+    imageItems.forEach(it => addImageFile(it.getAsFile()));
+  }
+});
+
+const outboundQueue = [];
+let outboundRunning = false;
+
+function renderLocalQueued(text, images, position) {
+  const row = document.createElement('div');
+  row.className = 'ev user local-queued';
+  row._queuedMessageText = text;
+  const body = document.createElement('div');
+  body.textContent = text || '[image message]';
+  const status = document.createElement('div');
+  status.className = 'queue-status';
+  status.textContent = 'waiting locally for the current cognitive boundary · queue ' + position;
+  row.appendChild(body);
+  row.appendChild(status);
+  (images || []).forEach(url => {
+    const img = document.createElement('img');
+    img.src = url;
+    img.style.cssText = 'max-width:180px;max-height:180px;border-radius:6px;margin:5px 0 0 15px;display:block';
+    row.appendChild(img);
+  });
+  transcriptEl.appendChild(row);
+  observeRow(row);
+  jumpToLatest();
+  return {row, status};
+}
+
+async function drainOutboundQueue() {
+  if (outboundRunning) return;
+  outboundRunning = true;
+  while (outboundQueue.length) {
+    const item = outboundQueue[0];
+    if (item.echo.row.isConnected) {
+      item.echo.status.textContent = 'submitting · pAI will take this after the current cognitive boundary';
+    }
+    try {
+      const response = await fetch('/api/v2/send', { method: 'POST', headers: {'Content-Type':'application/json', 'X-PAI-Request':'same-origin'}, body: JSON.stringify({message: item.text, images: item.images}) });
+      if (!response.ok) {
+        const data = await response.json();
+        updateTranscript(() => {
+          if (item.echo.row.isConnected) removeRow(item.echo.row);
+          renderEvent({id: 0, type: 'error', data: data.error || 'Message rejected.'}, false, false);
+        });
+      } else if (item.echo.row.isConnected) {
+        item.echo.status.textContent = 'turn completed · refreshing authoritative history';
+        setTimeout(() => updateTranscript(() => removeRow(item.echo.row)), 2500);
+      }
+    } catch (error) {
+      if (item.echo.row.isConnected) {
+        item.echo.status.textContent = 'network interrupted · admission is unknown; inspect history before retrying';
+        item.echo.row.classList.add('error');
+      }
+    }
+    outboundQueue.shift();
+    outboundQueue.forEach((queued, index) => {
+      if (queued.echo.row.isConnected) {
+        queued.echo.status.textContent = 'waiting locally for the current cognitive boundary · queue ' + (index + 1);
+      }
+    });
+  }
+  outboundRunning = false;
+}
+
+function send() {
+  const text = inputEl.value.trim();
+  if (!text && pendingImages.length === 0) return;
+  if (outboundQueue.length >= 32) {
+    renderEvent({id: 0, type: 'error', data: 'Local outgoing queue is full; wait for an earlier turn to finish.'}, false, false);
+    return;
+  }
+  const images = pendingImages;
+  inputEl.value = ''; autoGrow();
+  pendingImages = []; renderPendingImages();
+  const echo = renderLocalQueued(text, images, outboundQueue.length + 1);
+  outboundQueue.push({text, images, echo});
+  drainOutboundQueue();
+  inputEl.focus();
+}
+sendEl.addEventListener('click', send);
+
+// --- file browser ---
+const filemodal = document.getElementById('filemodal');
+const fmList = document.getElementById('fm-list');
+const fmCrumb = document.getElementById('fm-crumb');
+const fmPath = document.getElementById('fm-path');
+const fmTextarea = document.getElementById('fm-textarea');
+const fmStatus = document.getElementById('fm-status');
+let fmCurrentDir = '';
+let fmCurrentFile = null;
+let fmRoot = 'workspace';
+let fmCanWrite = false, fmRequest = 0, fmBusy = false;
+const fmSave = document.getElementById('fm-save'), fmDownload = document.getElementById('fm-download');
+const fmUpload = document.getElementById('fm-upload-input'), fmUploadButton = document.getElementById('fm-upload-btn');
+function fmPermissions(writable) {
+  fmCanWrite = !!writable;
+  document.getElementById('fm-permission').textContent = fmCanWrite
+    ? 'Workspace files · uploads up to 20 MB. Existing filenames are protected.'
+    : 'Read-only workspace. Enable web_file_mutation in Settings and restart to allow saving and uploads.';
+  fmUpload.disabled = fmUploadButton.disabled = !fmCanWrite || fmBusy;
+}
+async function fmRequestJSON(url, options = {}) {
+  const response = await fetch(url, {cache:'no-store', ...options});
+  let data;
+  try { data = await response.json(); } catch (_) { throw new Error('File request failed (HTTP '+response.status+'). Reload if your login expired.'); }
+  if (!response.ok || data.error) throw new Error(data.error || 'HTTP '+response.status);
+  return data;
+}
+function fmClear() {
+  fmCurrentFile = null; fmTextarea.value = ''; fmTextarea.readOnly = true;
+  fmSave.disabled = true; fmDownload.hidden = true; fmPath.textContent = 'No file open';
+}
+
+function registerTerminalMenu() {
+  if (!window.paiShell) return;
+  window.paiShell.register({id:'files',label:'Files',action:() => { filemodal.classList.add('open'); fmNavigate(''); }});
+}
+window.addEventListener('pai-shell-ready', registerTerminalMenu);
+registerTerminalMenu();
+document.getElementById('fm-close').addEventListener('click', () => filemodal.classList.remove('open'));
+
+async function fmNavigate(dir) {
+  if (fmBusy) return;
+  const request = ++fmRequest;
+  fmClear(); fmPermissions(false); fmStatus.textContent = 'Loading…';
+  try {
+  fmCrumb.textContent = fmRoot + (dir ? '/' + dir : '');
+  const data = await fmRequestJSON('/api/v2/files?path=' + encodeURIComponent(dir));
+  if (request !== fmRequest) return;
+  fmCurrentDir = dir; fmPermissions(data.can_write); fmStatus.textContent = '';
+  fmRoot = (data.root || 'workspace').replace(/[\\/]$/, '');
+  fmCrumb.textContent = fmRoot + (dir ? '/' + dir : '');
+  fmList.innerHTML = '';
+  fmList.appendChild(fmCrumb);
+  if (dir) {
+    const up = document.createElement('button');
+    up.className = 'entry dir'; up.textContent = '..';
+    up.onclick = () => fmNavigate(dir.split('/').slice(0, -1).join('/'));
+    fmList.appendChild(up);
+  }
+  data.entries.sort((a,b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name)).forEach(ent => {
+    const row = document.createElement('button');
+    row.className = 'entry ' + (ent.is_dir ? 'dir' : 'file');
+    row.textContent = ent.name;
+    row.onclick = () => ent.is_dir ? fmNavigate((dir ? dir + '/' : '') + ent.name) : fmOpen((dir ? dir + '/' : '') + ent.name);
+    fmList.appendChild(row);
+  });
+  } catch(error) { if (request === fmRequest) fmStatus.textContent = error.message; }
+}
+
+async function fmOpen(path) {
+  if (fmBusy) return;
+  const request = ++fmRequest;
+  fmClear(); fmStatus.textContent = 'Opening…';
+  try {
+  const data = await fmRequestJSON('/api/v2/file?path=' + encodeURIComponent(path));
+  if (request !== fmRequest) return;
+  fmPermissions(data.can_write);
+  fmCurrentFile = path;
+  fmPath.textContent = path + (data.truncated ? ' (truncated preview)' : '');
+  fmTextarea.value = data.content || '';
+  fmTextarea.readOnly = !(fmCanWrite && data.editable);
+  fmSave.disabled = fmTextarea.readOnly;
+  fmDownload.href = '/api/v2/download?path=' + encodeURIComponent(path);
+  fmDownload.download = path.split('/').pop(); fmDownload.hidden = false;
+  fmStatus.textContent = data.truncated ? 'Too large to edit here. Download the complete file.' :
+    !data.editable ? 'Binary or non-UTF-8 file. Use Download.' : '';
+  } catch(error) { if (request === fmRequest) fmStatus.textContent = error.message; }
+}
+
+document.getElementById('fm-save').addEventListener('click', async () => {
+  if (!fmCurrentFile || fmTextarea.readOnly || fmBusy) return;
+  fmBusy = true; fmSave.disabled = true; fmPermissions(fmCanWrite);
+  try {
+  await fmRequestJSON('/api/v2/file', { method: 'POST', headers: {'Content-Type':'application/json', 'X-PAI-Request':'same-origin'},
+    body: JSON.stringify({path: fmCurrentFile, content: fmTextarea.value}) });
+  fmStatus.textContent = 'Saved';
+  } catch(error) { fmStatus.textContent = error.message; }
+  finally { fmBusy = false; fmSave.disabled = fmTextarea.readOnly; fmPermissions(fmCanWrite); }
+});
+
+document.getElementById('fm-upload-btn').addEventListener('click', async () => {
+  if (!fmCanWrite || fmBusy) return;
+  const inp = fmUpload;
+  if (!inp.files.length) { fmStatus.textContent = 'choose a file first'; return; }
+  if (inp.files[0].size > 20000000) { fmStatus.textContent = 'Upload limit is 20 MB'; return; }
+  fmBusy = true; fmSave.disabled = true; fmPermissions(fmCanWrite);
+  try {
+  const fd = new FormData();
+  fd.append('file', inp.files[0]);
+  await fmRequestJSON('/api/v2/upload?path=' + encodeURIComponent(fmCurrentDir), { method: 'POST', headers: {'X-PAI-Request':'same-origin'}, body: fd });
+  inp.value = ''; fmBusy = false;
+  await fmNavigate(fmCurrentDir); fmStatus.textContent = 'Uploaded';
+  } catch(error) { fmStatus.textContent = error.message; }
+  finally { fmBusy = false; fmSave.disabled = fmTextarea.readOnly; fmPermissions(fmCanWrite); }
+});
+
+loadHistory();
+</script>
+</body>
+</html>

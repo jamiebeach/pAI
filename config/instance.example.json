@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "agent": {
+    "id": "replace-with-agent-id",
+    "persona": "dev"
+  },
+  "storage": {
+    "state_directory": "state",
+    "initialize_if_empty": true
+  },
+  "provider": {
+    "kind": "local",
+    "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+    "model": "replace-with-local-model"
+  },
+  "memory": {
+    "embedding_endpoint": "http://127.0.0.1:11435/api/embeddings",
+    "embedding_model": "nomic-embed-text",
+    "embedding_revision": "replace-with-embedding-revision",
+    "retrieval_embedding_model": "nomic-embed-text",
+    "retrieval_embedding_revision": "replace-with-retrieval-embedding-revision",
+    "vector_dimension": 768
+  },
+  "runtime": {
+    "provider_profile": "local-providerless-v1",
+    "context_profile": "solicited-conversation-dev",
+    "mind_loop": "work-state",
+    "recursive_tools": false,
+    "curiosity_wake_seconds": 0,
+    "deliberate_curiosity": false,
+    "curiosity_reach_out": false,
+    "curiosity_briefing": false,
+    "curiosity_consolidation": false,
+    "episodic_memory": false,
+    "knowledge_graph_formation": false,
+    "knowledge_graph_rebuild_only": false,
+    "knowledge_graph_budget_usd": null,
+    "knowledge_graph_prior_exposure_usd": null,
+    "context_graph_runtime_profile": "direct-v6",
+    "context_graph_budget_authorization_id": null,
+    "private_budget_percent": 0,
+    "private_reasoning_effort": "minimal",
+    "loop_trace": "off",
+    "context_trace": "off",
+    "show_rejected": false,
+    "show_memory_context": false,
+    "affect_baseline_event_id": null,
+    "verbose_startup": false
+  },
+  "web": {
+    "enabled": false,
+    "address": "127.0.0.1",
+    "port": 8080,
+    "file_mutation": false
+  }
+}

@@ -1,0 +1,1041 @@
+{
+  "schema_version": 1,
+  "ontology_revision": "personal-context-core-glm53-v1",
+  "status": "lab-candidate",
+  "source": {
+    "model": "z-ai/glm-5.3",
+    "run_id": "20260831T221711Z",
+    "snapshot_receipt": {
+      "sha256": "6b80bd1a99a3cfe032847627fe5baadbc7a3deda10fd3a3ada1149eb90f8a203",
+      "event_count": 45053,
+      "maximum_storage_sequence": 45053
+    },
+    "context_request_sha256": "634ef725ae280ad91945098a611c1dfe69872b4c3802970cc31f0abb515941d0",
+    "raw_ontology_sha256": "94f3bffccde79f116aa840fbb694d4d12566eb5929a7bf0d37426e0c70264e4a"
+  },
+  "repairs": [
+    {
+      "path": "ontology.predicates[35].inverse",
+      "predicate": "migration_target_for",
+      "from": "migration_source_for",
+      "to": null,
+      "rule": "undeclared optional inverse is reduced to null"
+    }
+  ],
+  "ontology": {
+    "schema_version": 1,
+    "ontology_name": "personal_context_core",
+    "design_principles": [
+      "Types generalize across domains; episode-specific wording is never encoded.",
+      "Predicates are operational: each is usable for graph reads/writes with typed endpoints.",
+      "All inverses are declared within this schema or null."
+    ],
+    "entity_types": [
+      {
+        "name": "person",
+        "definition": "A human individual, including the operator and other people; no operator-specific type exists in the core schema.",
+        "inclusion_rule": "Any human mentioned as an actor, owner, or relation endpoint.",
+        "exclusion_rule": "Non-human actors (see agent) and groups of people (see organization)."
+      },
+      {
+        "name": "agent",
+        "definition": "An autonomous or semi-autonomous software actor (assistant, persona, AI agent) that can perform actions, hold goals, or exchange messages.",
+        "inclusion_rule": "Named AI assistants, agent personas, harnesses acting as agents.",
+        "exclusion_rule": "Humans (person); passive software artifacts (artifact, system)."
+      },
+      {
+        "name": "organization",
+        "definition": "A collective human entity such as a company, team, or institution.",
+        "inclusion_rule": "Companies, employers, publishers, partner firms.",
+        "exclusion_rule": "Individual humans; software systems."
+      },
+      {
+        "name": "animal",
+        "definition": "A non-human living creature, typically a pet or companion animal.",
+        "inclusion_rule": "Named pets and animals.",
+        "exclusion_rule": "Humans and software entities."
+      },
+      {
+        "name": "artifact",
+        "definition": "A created, largely static object: document, paper, media, product, repository, protocol specification, tool, or design deliverable.",
+        "inclusion_rule": "Anything produced, authored, hosted, shared, or reviewed that is not itself a running system.",
+        "exclusion_rule": "Running software systems (system); projects (project); abstract notions (concept)."
+      },
+      {
+        "name": "system",
+        "definition": "A running or deployable software/hardware system, harness, platform, or infrastructure component that hosts or executes other software.",
+        "inclusion_rule": "Harnesses, pipelines, platforms, deployed software systems.",
+        "exclusion_rule": "Documents, repos, protocols as specifications (artifact)."
+      },
+      {
+        "name": "project",
+        "definition": "A time-bounded effort with goals and deliverables, possibly spanning systems and artifacts.",
+        "inclusion_rule": "Named initiatives, roadmaps, migration efforts.",
+        "exclusion_rule": "Ongoing systems; single deliverables (artifact)."
+      },
+      {
+        "name": "concept",
+        "definition": "An abstract idea, topic, design concept, method, risk, or problem class referenced in reasoning or discussion.",
+        "inclusion_rule": "Design ideas, mechanisms, risks, technical problems, topics.",
+        "exclusion_rule": "Concrete created objects (artifact) or medical states (condition)."
+      },
+      {
+        "name": "condition",
+        "definition": "A medical or health-related state, trait, or deficiency attributable to a person or animal.",
+        "inclusion_rule": "Diagnosed or lifelong conditions, deficiencies.",
+        "exclusion_rule": "General topics (concept)."
+      },
+      {
+        "name": "event",
+        "definition": "A temporally located occurrence, conversation, trip, or milestone that can be ordered in time.",
+        "inclusion_rule": "Trips, sessions, check-ins, deployments, incidents.",
+        "exclusion_rule": "Persistent entities; ongoing efforts (project)."
+      },
+      {
+        "name": "gap",
+        "definition": "A known deficiency in capability, retrieval, or knowledge that the system or operator has identified and may address.",
+        "inclusion_rule": "Retrieval gaps, demonstrated failure modes, known unknowns.",
+        "exclusion_rule": "Abstract problem topics without an identified deficiency instance (concept)."
+      }
+    ],
+    "predicates": [
+      {
+        "name": "part_of",
+        "definition": "Subject is a constituent component or member of the object.",
+        "subject_types": [
+          "artifact",
+          "system",
+          "project",
+          "event"
+        ],
+        "object_types": [
+          "artifact",
+          "system",
+          "project"
+        ],
+        "inverse": "has_part",
+        "symmetric": false,
+        "transitive": true
+      },
+      {
+        "name": "has_part",
+        "definition": "Subject contains the object as a constituent component or member.",
+        "subject_types": [
+          "artifact",
+          "system",
+          "project"
+        ],
+        "object_types": [
+          "artifact",
+          "system",
+          "project",
+          "event"
+        ],
+        "inverse": "part_of",
+        "symmetric": false,
+        "transitive": true
+      },
+      {
+        "name": "works_at",
+        "definition": "Subject is currently affiliated with or employed by the object organization.",
+        "subject_types": [
+          "person"
+        ],
+        "object_types": [
+          "organization"
+        ],
+        "inverse": "employs",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "employs",
+        "definition": "Subject organization currently employs or affiliates the object person.",
+        "subject_types": [
+          "organization"
+        ],
+        "object_types": [
+          "person"
+        ],
+        "inverse": "works_at",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "formerly_at",
+        "definition": "Subject was previously affiliated with or employed by the object organization.",
+        "subject_types": [
+          "person"
+        ],
+        "object_types": [
+          "organization"
+        ],
+        "inverse": null,
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "operates",
+        "definition": "Subject person or agent uses and controls the object system as its operator.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "system"
+        ],
+        "inverse": "operated_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "operated_by",
+        "definition": "Subject system is controlled by the object person or agent.",
+        "subject_types": [
+          "system"
+        ],
+        "object_types": [
+          "person",
+          "agent"
+        ],
+        "inverse": "operates",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "owns",
+        "definition": "Subject has ownership or lasting custodianship of the object.",
+        "subject_types": [
+          "person",
+          "agent",
+          "organization"
+        ],
+        "object_types": [
+          "artifact",
+          "animal",
+          "system"
+        ],
+        "inverse": "owned_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "owned_by",
+        "definition": "Subject is owned or custodially held by the object.",
+        "subject_types": [
+          "artifact",
+          "animal",
+          "system"
+        ],
+        "object_types": [
+          "person",
+          "agent",
+          "organization"
+        ],
+        "inverse": "owns",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "authored",
+        "definition": "Subject person or agent created the content of the object artifact.",
+        "subject_types": [
+          "person",
+          "agent",
+          "organization"
+        ],
+        "object_types": [
+          "artifact"
+        ],
+        "inverse": "authored_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "authored_by",
+        "definition": "Subject artifact was created by the object person, agent, or organization.",
+        "subject_types": [
+          "artifact"
+        ],
+        "object_types": [
+          "person",
+          "agent",
+          "organization"
+        ],
+        "inverse": "authored",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "leads",
+        "definition": "Subject has leadership or decision authority over the object project.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "project"
+        ],
+        "inverse": "led_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "led_by",
+        "definition": "Subject project is led by the object person or agent.",
+        "subject_types": [
+          "project"
+        ],
+        "object_types": [
+          "person",
+          "agent"
+        ],
+        "inverse": "leads",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "works_on",
+        "definition": "Subject is actively contributing effort to the object project or artifact.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "project",
+          "artifact",
+          "system"
+        ],
+        "inverse": "worked_on_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "worked_on_by",
+        "definition": "Subject project, artifact, or system receives active effort from the object person or agent.",
+        "subject_types": [
+          "project",
+          "artifact",
+          "system"
+        ],
+        "object_types": [
+          "person",
+          "agent"
+        ],
+        "inverse": "works_on",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "addresses",
+        "definition": "Subject artifact or concept is intended to resolve or mitigate the object gap or concept-problem.",
+        "subject_types": [
+          "artifact",
+          "concept",
+          "system",
+          "project"
+        ],
+        "object_types": [
+          "gap",
+          "concept"
+        ],
+        "inverse": "addressed_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "addressed_by",
+        "definition": "Subject gap or problem-concept is targeted by the object artifact, concept, system, or project.",
+        "subject_types": [
+          "gap",
+          "concept"
+        ],
+        "object_types": [
+          "artifact",
+          "concept",
+          "system",
+          "project"
+        ],
+        "inverse": "addresses",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "affects",
+        "definition": "Subject condition or concept has an impact on the object person, system, condition, or concept.",
+        "subject_types": [
+          "condition",
+          "concept"
+        ],
+        "object_types": [
+          "person",
+          "system",
+          "condition",
+          "concept"
+        ],
+        "inverse": "affected_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "affected_by",
+        "definition": "Subject person, system, condition, or concept is impacted by the object condition or concept.",
+        "subject_types": [
+          "person",
+          "system",
+          "condition",
+          "concept"
+        ],
+        "object_types": [
+          "condition",
+          "concept"
+        ],
+        "inverse": "affects",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "has_condition",
+        "definition": "Subject person or animal has the object medical condition or trait.",
+        "subject_types": [
+          "person",
+          "animal"
+        ],
+        "object_types": [
+          "condition"
+        ],
+        "inverse": "condition_of",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "condition_of",
+        "definition": "Subject condition is held by the object person or animal.",
+        "subject_types": [
+          "condition"
+        ],
+        "object_types": [
+          "person",
+          "animal"
+        ],
+        "inverse": "has_condition",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "uses",
+        "definition": "Subject person or agent employs the object artifact, system, or protocol in their activity.",
+        "subject_types": [
+          "person",
+          "agent",
+          "system"
+        ],
+        "object_types": [
+          "artifact",
+          "system"
+        ],
+        "inverse": "used_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "used_by",
+        "definition": "Subject artifact, system, or protocol is employed by the object person, agent, or system.",
+        "subject_types": [
+          "artifact",
+          "system"
+        ],
+        "object_types": [
+          "person",
+          "agent",
+          "system"
+        ],
+        "inverse": "uses",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "considered_using",
+        "definition": "Subject person or agent has evaluated but not necessarily adopted the object artifact, system, or protocol.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "artifact",
+          "system"
+        ],
+        "inverse": null,
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "implements",
+        "definition": "Subject artifact or system realizes the object concept, protocol, or design in concrete form.",
+        "subject_types": [
+          "artifact",
+          "system"
+        ],
+        "object_types": [
+          "concept",
+          "artifact"
+        ],
+        "inverse": "implemented_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "implemented_by",
+        "definition": "Subject concept or protocol is realized by the object artifact or system.",
+        "subject_types": [
+          "concept",
+          "artifact"
+        ],
+        "object_types": [
+          "artifact",
+          "system"
+        ],
+        "inverse": "implements",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "occurs_after",
+        "definition": "Subject event happens temporally after the object event.",
+        "subject_types": [
+          "event"
+        ],
+        "object_types": [
+          "event"
+        ],
+        "inverse": "occurs_before",
+        "symmetric": false,
+        "transitive": true
+      },
+      {
+        "name": "occurs_before",
+        "definition": "Subject event happens temporally before the object event.",
+        "subject_types": [
+          "event"
+        ],
+        "object_types": [
+          "event"
+        ],
+        "inverse": "occurs_after",
+        "symmetric": false,
+        "transitive": true
+      },
+      {
+        "name": "related_to",
+        "definition": "Generic associative link between any two entities when no more specific predicate applies.",
+        "subject_types": [
+          "person",
+          "agent",
+          "organization",
+          "animal",
+          "artifact",
+          "system",
+          "project",
+          "concept",
+          "condition",
+          "event",
+          "gap"
+        ],
+        "object_types": [
+          "person",
+          "agent",
+          "organization",
+          "animal",
+          "artifact",
+          "system",
+          "project",
+          "concept",
+          "condition",
+          "event",
+          "gap"
+        ],
+        "inverse": "related_to",
+        "symmetric": true,
+        "transitive": false
+      },
+      {
+        "name": "proposed",
+        "definition": "Subject agent or person put forward the object concept, artifact, project, or system as an idea or plan.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "concept",
+          "artifact",
+          "project",
+          "system"
+        ],
+        "inverse": "proposed_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "proposed_by",
+        "definition": "Subject concept, artifact, project, or system was put forward by the object person or agent.",
+        "subject_types": [
+          "concept",
+          "artifact",
+          "project",
+          "system"
+        ],
+        "object_types": [
+          "person",
+          "agent"
+        ],
+        "inverse": "proposed",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "recommends",
+        "definition": "Subject person or agent advises adopting or following the object artifact, protocol, concept, or system.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "artifact",
+          "concept",
+          "system"
+        ],
+        "inverse": "recommended_by",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "recommended_by",
+        "definition": "Subject artifact, concept, or system was advised for adoption by the object person or agent.",
+        "subject_types": [
+          "artifact",
+          "concept",
+          "system"
+        ],
+        "object_types": [
+          "person",
+          "agent"
+        ],
+        "inverse": "recommends",
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "warned_about",
+        "definition": "Subject person or agent cautioned about the risk or drawback described by the object concept.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "concept"
+        ],
+        "inverse": null,
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "keeps_secret_from",
+        "definition": "Subject person or agent deliberately withholds information from the object agent or person.",
+        "subject_types": [
+          "person",
+          "agent"
+        ],
+        "object_types": [
+          "person",
+          "agent"
+        ],
+        "inverse": null,
+        "symmetric": false,
+        "transitive": false
+      },
+      {
+        "name": "migration_target_for",
+        "definition": "Subject system is the intended destination for migrating the object system.",
+        "subject_types": [
+          "system"
+        ],
+        "object_types": [
+          "system"
+        ],
+        "inverse": null,
+        "symmetric": false,
+        "transitive": false
+      }
+    ],
+    "baseline_type_mappings": [
+      {
+        "source": "agent",
+        "disposition": "MAP",
+        "target": "agent"
+      },
+      {
+        "source": "ai_agent",
+        "disposition": "MAP",
+        "target": "agent"
+      },
+      {
+        "source": "ai_assistant",
+        "disposition": "MAP",
+        "target": "agent"
+      },
+      {
+        "source": "animal",
+        "disposition": "MAP",
+        "target": "animal"
+      },
+      {
+        "source": "company",
+        "disposition": "MAP",
+        "target": "organization"
+      },
+      {
+        "source": "concept",
+        "disposition": "MAP",
+        "target": "concept"
+      },
+      {
+        "source": "design_concept",
+        "disposition": "MAP",
+        "target": "concept"
+      },
+      {
+        "source": "design_proposal",
+        "disposition": "MAP",
+        "target": "concept"
+      },
+      {
+        "source": "media",
+        "disposition": "MAP",
+        "target": "artifact"
+      },
+      {
+        "source": "medical_condition",
+        "disposition": "MAP",
+        "target": "condition"
+      },
+      {
+        "source": "operator",
+        "disposition": "MAP",
+        "target": "person"
+      },
+      {
+        "source": "person",
+        "disposition": "MAP",
+        "target": "person"
+      },
+      {
+        "source": "pet",
+        "disposition": "MAP",
+        "target": "animal"
+      },
+      {
+        "source": "product",
+        "disposition": "MAP",
+        "target": "artifact"
+      },
+      {
+        "source": "project",
+        "disposition": "MAP",
+        "target": "project"
+      },
+      {
+        "source": "protocol",
+        "disposition": "MAP",
+        "target": "artifact"
+      },
+      {
+        "source": "repository",
+        "disposition": "MAP",
+        "target": "artifact"
+      },
+      {
+        "source": "research_paper",
+        "disposition": "MAP",
+        "target": "artifact"
+      },
+      {
+        "source": "retrieval_gap",
+        "disposition": "MAP",
+        "target": "gap"
+      },
+      {
+        "source": "software_component",
+        "disposition": "MAP",
+        "target": "artifact"
+      },
+      {
+        "source": "software_system",
+        "disposition": "MAP",
+        "target": "system"
+      },
+      {
+        "source": "system",
+        "disposition": "MAP",
+        "target": "system"
+      },
+      {
+        "source": "technical_problem",
+        "disposition": "MAP",
+        "target": "concept"
+      },
+      {
+        "source": "tool",
+        "disposition": "MAP",
+        "target": "artifact"
+      }
+    ],
+    "baseline_predicate_mappings": [
+      {
+        "source": "addresses",
+        "disposition": "MAP",
+        "target": "addresses"
+      },
+      {
+        "source": "advised_on",
+        "disposition": "MAP",
+        "target": "recommends"
+      },
+      {
+        "source": "affects",
+        "disposition": "MAP",
+        "target": "affects"
+      },
+      {
+        "source": "assists_operator",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "authored",
+        "disposition": "MAP",
+        "target": "authored"
+      },
+      {
+        "source": "cfo_at",
+        "disposition": "MAP",
+        "target": "works_at"
+      },
+      {
+        "source": "considered_using",
+        "disposition": "EXTENSION",
+        "target": "considered_using"
+      },
+      {
+        "source": "delivered",
+        "disposition": "MAP",
+        "target": "authored"
+      },
+      {
+        "source": "experienced",
+        "disposition": "MAP",
+        "target": "related_to"
+      },
+      {
+        "source": "formerly_at",
+        "disposition": "EXTENSION",
+        "target": "formerly_at"
+      },
+      {
+        "source": "has_condition",
+        "disposition": "MAP",
+        "target": "has_condition"
+      },
+      {
+        "source": "has_first_slice",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "has_governance_mechanism",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "has_lifecycle",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "has_retrieval_gap",
+        "disposition": "MAP",
+        "target": "addressed_by"
+      },
+      {
+        "source": "hosted_in",
+        "disposition": "MAP",
+        "target": "part_of"
+      },
+      {
+        "source": "identified_gap",
+        "disposition": "MAP",
+        "target": "proposed"
+      },
+      {
+        "source": "implements_model",
+        "disposition": "MAP",
+        "target": "implements"
+      },
+      {
+        "source": "includes_tool",
+        "disposition": "MAP",
+        "target": "has_part"
+      },
+      {
+        "source": "intended_for",
+        "disposition": "MAP",
+        "target": "related_to"
+      },
+      {
+        "source": "is_operator_of",
+        "disposition": "MAP",
+        "target": "operates"
+      },
+      {
+        "source": "is_working_on",
+        "disposition": "MAP",
+        "target": "works_on"
+      },
+      {
+        "source": "keep_secret_from",
+        "disposition": "MAP",
+        "target": "keeps_secret_from"
+      },
+      {
+        "source": "leads_project",
+        "disposition": "MAP",
+        "target": "leads"
+      },
+      {
+        "source": "managed_with",
+        "disposition": "MAP",
+        "target": "uses"
+      },
+      {
+        "source": "migration_target_for",
+        "disposition": "MAP",
+        "target": "migration_target_for"
+      },
+      {
+        "source": "named_from",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "occurred_after",
+        "disposition": "MAP",
+        "target": "occurs_after"
+      },
+      {
+        "source": "operates",
+        "disposition": "MAP",
+        "target": "operates"
+      },
+      {
+        "source": "owns",
+        "disposition": "MAP",
+        "target": "owns"
+      },
+      {
+        "source": "owns_pet",
+        "disposition": "MAP",
+        "target": "owns"
+      },
+      {
+        "source": "part_of",
+        "disposition": "MAP",
+        "target": "part_of"
+      },
+      {
+        "source": "proposed",
+        "disposition": "MAP",
+        "target": "proposed"
+      },
+      {
+        "source": "proposed_adoption",
+        "disposition": "MAP",
+        "target": "proposed"
+      },
+      {
+        "source": "proposed_mechanism",
+        "disposition": "MAP",
+        "target": "proposed"
+      },
+      {
+        "source": "proposed_open_sourcing",
+        "disposition": "MAP",
+        "target": "proposed"
+      },
+      {
+        "source": "provides",
+        "disposition": "MAP",
+        "target": "related_to"
+      },
+      {
+        "source": "recalled_via_memory",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "recommended_protocol",
+        "disposition": "MAP",
+        "target": "recommends"
+      },
+      {
+        "source": "reviewed",
+        "disposition": "MAP",
+        "target": "related_to"
+      },
+      {
+        "source": "runs_on",
+        "disposition": "MAP",
+        "target": "part_of"
+      },
+      {
+        "source": "serves",
+        "disposition": "MAP",
+        "target": "related_to"
+      },
+      {
+        "source": "shared_paper",
+        "disposition": "MAP",
+        "target": "related_to"
+      },
+      {
+        "source": "to_be_implemented_by",
+        "disposition": "DROP",
+        "target": null
+      },
+      {
+        "source": "wants_to_migrate",
+        "disposition": "MAP",
+        "target": "migration_target_for"
+      },
+      {
+        "source": "warned_about_over_coordination",
+        "disposition": "EXTENSION",
+        "target": "warned_about"
+      },
+      {
+        "source": "works_at",
+        "disposition": "MAP",
+        "target": "works_at"
+      }
+    ],
+    "extension_policy": {
+      "proposal_threshold": "An extension is admitted only when a recurring relation cannot be expressed by a core predicate without semantic distortion; extensions are first-class predicates with full type declarations.",
+      "required_evidence": "At least two distinct future episodes or a structural necessity in the graph read path.",
+      "consolidation_rule": "When an extension's usage stabilizes, it may be promoted to core; when unused across a consolidation window, it is dropped."
+    },
+    "risks": [
+      "related_to may become a catch-all; usage should be monitored and promoted to specific predicates when patterns emerge.",
+      "protocol as artifact conflates specification and standard; if protocols become first-class actors in coordination episodes, consider a distinct protocol type.",
+      "gap vs concept boundary depends on whether a deficiency is instantiated as an addressable node; ambiguous cases should default to concept until actionable."
+    ]
+  },
+  "selected_ontology_sha256": "b92b6998f298b720302037f9f8989de5698235b271e6890411375e9547a388bb"
+}

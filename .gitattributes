@@ -1,0 +1,13 @@
+# Shell scripts and Lisp are read inside a Linux container. A CRLF checkout
+# breaks a .sh script with an obscure error ("bad interpreter", or a silent
+# no-op), so force LF regardless of the developer's platform or core.autocrlf.
+*.sh   text eol=lf
+*.lisp text eol=lf
+*.asd  text eol=lf
+*.sexp text eol=lf
+*.md   text eol=lf
+
+# JSON fixtures are hashed. grounded-story-project.json has its sha256 pinned
+# in evals/results/, so a CRLF checkout changes the digest and the assertion
+# fails on Windows for reasons no one will connect to line endings.
+*.json text eol=lf

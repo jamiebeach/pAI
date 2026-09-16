@@ -1,0 +1,10 @@
+# Reviewed dependency index for the public development image.
+# Docker verifies these values before resolving or compiling project systems.
+QUICKLISP_BOOTSTRAP_SHA256=4a7a5c2aebe0716417047854267397e24a44d0cce096127411e9ce9ccfeb2c17
+QUICKLISP_CLIENT_VERSION=2021-02-13
+QUICKLISP_CLIENT_URL=http://beta.quicklisp.org/client/2021-02-13/client-info.sexp
+QUICKLISP_DIST_VERSION=2026-01-01
+QUICKLISP_DIST_URL=http://beta.quicklisp.org/dist/quicklisp/2026-01-01/distinfo.txt
+QUICKLISP_DISTINFO_SHA256=fc436eb7582c8b69f2ec87d77bdaa4087502328dec09f21c576d78fac8bf5e15
+QUICKLISP_RELEASES_SHA256=9cad59398e760032de0053cafcfdcf16eb437caf1a20d65668a8e3b726485da4
+QUICKLISP_SYSTEMS_SHA256=cb8309321840887b542fa853dc4fe95f9a4ea2d7ca028c521d32b67d2bdf51c7

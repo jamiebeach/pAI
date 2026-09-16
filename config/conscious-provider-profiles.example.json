@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "status": "example-requires-local-review",
+  "experiment_routing": {
+    "default_profile": "replace-with-profile-name",
+    "episode_profile": "replace-with-episode-profile-name",
+    "graph_profile": "replace-with-graph-profile-name",
+    "local_models": "explicit-local-configuration-only",
+    "automatic_runtime_fallback": false,
+    "approval_required_per_paid_seal_or_cli_session": true
+  },
+  "profiles": {
+    "replace-with-profile-name": {
+      "provider": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "model": "replace-with-provider/model-slug",
+      "role": "human-facing-renderer",
+      "publication_role": "proposal-only",
+      "allowed_purposes": [
+        "respond"
+      ],
+      "context_capacity_tokens": 0,
+      "reasoning": {
+        "enabled": false
+      },
+      "requires_structured_output": false,
+      "requires_native_tool_calls": true,
+      "supports_parallel_tool_calls_parameter": false,
+      "provider_routing": {
+        "sort": "price",
+        "require_parameters": true,
+        "data_collection": "deny",
+        "zdr": true,
+        "allow_fallbacks": false,
+        "max_price_usd_per_million": {
+          "prompt": 0.0,
+          "completion": 0.0
+        }
+      },
+      "budget_contract": {
+        "cumulative_cost_ceiling_usd_required": true,
+        "stop_on_missing_usage": true,
+        "stop_on_cost_anomaly": true,
+        "retry_limit": 0
+      }
+    },
+    "replace-with-episode-profile-name": {
+      "provider": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "model": "replace-with-provider/model-slug",
+      "role": "private-conversation-episode-sealer",
+      "publication_role": "proposal-only",
+      "allowed_purposes": [
+        "conversation-episode-sealing"
+      ],
+      "reasoning": {
+        "enabled": false
+      },
+      "requires_native_tool_calls": true,
+      "supports_parallel_tool_calls_parameter": false,
+      "provider_routing": {
+        "sort": "price",
+        "require_parameters": true,
+        "data_collection": "deny",
+        "zdr": true,
+        "allow_fallbacks": false,
+        "max_price_usd_per_million": {
+          "prompt": 0.0,
+          "completion": 0.0
+        }
+      },
+      "budget_contract": {
+        "cumulative_cost_ceiling_usd_required": true,
+        "stop_on_missing_usage": true,
+        "stop_on_cost_anomaly": true,
+        "retry_limit": 0
+      }
+    },
+    "replace-with-graph-profile-name": {
+      "provider": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "model": "replace-with-provider/model-slug",
+      "role": "private-graph-proposal-and-review",
+      "publication_role": "proposal-only",
+      "allowed_purposes": [
+        "knowledge-graph-formation"
+      ],
+      "reasoning": {
+        "enabled": false
+      },
+      "requires_native_tool_calls": true,
+      "supports_parallel_tool_calls_parameter": false,
+      "provider_routing": {
+        "sort": "price",
+        "require_parameters": true,
+        "data_collection": "deny",
+        "zdr": true,
+        "allow_fallbacks": false,
+        "max_price_usd_per_million": {
+          "prompt": 0.0,
+          "completion": 0.0
+        }
+      },
+      "budget_contract": {
+        "cumulative_cost_ceiling_usd_required": true,
+        "stop_on_missing_usage": true,
+        "stop_on_cost_anomaly": true,
+        "retry_limit": 0
+      }
+    }
+  }
+}

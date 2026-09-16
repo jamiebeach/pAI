@@ -1,0 +1,68 @@
+{
+  "fixture_version": "2.0.0",
+  "purpose": "Deterministic publication-contract discourse properties across temporal truth states; no authored expected replies.",
+  "cases": [
+    {
+      "id": "empty-audit-thread",
+      "audit_status": "complete",
+      "event_types": [],
+      "turns": [
+        "What happened while I was away?",
+        "I am asking what actually occurred.",
+        "You still have not answered the question."
+      ],
+      "expected_correction_depths": [0, 1, 2],
+      "required_properties": ["code-owned-fact", "phase-distinct-nuclei", "hard-boundary-valid"]
+    },
+    {
+      "id": "unavailable-audit-thread",
+      "audit_status": "unavailable",
+      "event_types": [],
+      "turns": [
+        "What happened overnight?",
+        "Please answer what actually happened.",
+        "That still does not answer what I asked."
+      ],
+      "expected_correction_depths": [0, 1, 2],
+      "required_properties": ["explicit-uncertainty", "phase-distinct-nuclei", "no-invented-activity"]
+    },
+    {
+      "id": "positive-audit-thread",
+      "audit_status": "complete",
+      "event_types": ["tick-terminal", "initiative-decision"],
+      "turns": [
+        "What did you do while I was gone?",
+        "Be specific about what actually occurred.",
+        "Give me the direct answer."
+      ],
+      "expected_correction_depths": [0, 1, 2],
+      "required_properties": ["exact-event-count", "event-types-preserved", "phase-distinct-nuclei"]
+    },
+    {
+      "id": "forensic-tool-authority",
+      "audit_status": "complete",
+      "event_types": [],
+      "turns": ["Investigate the logs and tell me what happened while I was away."],
+      "expected_intent": "forensic-investigation",
+      "expected_tool_policy": "available",
+      "follow_up": "Give me the direct answer.",
+      "expected_follow_up_temporal_query": false,
+      "required_property": "do-not-downgrade-tool-results-to-passive-audit"
+    },
+    {
+      "id": "interrupted-temporal-thread",
+      "history": [
+        "What happened while I was away?",
+        "What should we build next?"
+      ],
+      "turns": ["You still have not answered the question."],
+      "expected_temporal_query": false,
+      "expected_correction_depth": 0
+    },
+    {
+      "id": "task-check-in-disambiguation",
+      "turns": ["Check in the code where the response boundary is installed."],
+      "expected_intent": "conversation"
+    }
+  ]
+}

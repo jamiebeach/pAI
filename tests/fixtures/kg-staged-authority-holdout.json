@@ -1,0 +1,22 @@
+{
+  "source_kind": "synthetic-controlled",
+  "cases": [
+    {"case_id": "same-species-pair", "timestamp": 3993000000, "sources": [
+      {"source_id": "authority:one", "speaker_id": "operator", "kind": "original-utterance", "text": "I own two cats. One is named Rook and the other is named Ash. Rook and Ash are different individuals, not two names for one cat."}
+    ]},
+    {"case_id": "no-unique-target", "timestamp": 3993000060, "sources": [
+      {"source_id": "authority:two", "speaker_id": "operator", "kind": "original-utterance", "text": "One of my cats might have been recorded with the wrong name. Perhaps it should be Finn, but I cannot remember which cat or whether this is true. Do not change either name until I clarify."}
+    ]},
+    {"case_id": "agent-is-not-operator-authority", "timestamp": 3993000120, "sources": [
+      {"source_id": "authority:three", "speaker_id": "active-persona", "kind": "prior-agent-utterance", "text": "I think the operator's cat recorded as Rook should actually be named Moss. I want to correct the stored name from Rook to Moss, although the operator has not supplied or confirmed that correction."}
+    ]}
+  ],
+  "queries": [
+    {"query": "Rook", "expected_count": 1, "expected_object_label": "Rook"},
+    {"query": "Ash", "expected_count": 1, "expected_object_label": "Ash"},
+    {"query": "Finn", "expected_count": 0, "expected_object_label": null},
+    {"query": "Moss", "expected_count": 0, "expected_object_label": null},
+    {"query": "turtle", "expected_count": 0, "expected_object_label": null},
+    {"query": "tea", "expected_count": 0, "expected_object_label": null}
+  ]
+}

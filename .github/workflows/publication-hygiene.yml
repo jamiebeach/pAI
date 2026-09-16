@@ -1,0 +1,48 @@
+name: Publication hygiene
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  publication-tool-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -p test_publication.py -v
+      - run: python3 -m unittest discover -s tests -p test_isolated_runner.py -v
+      - run: python3 -m unittest discover -s tests -p test_qualification_contract.py -v
+      - run: python3 scripts/qualification_contract.py
+
+  publication-audit:
+    # Private identity policy is never exposed to pull-request code.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Materialize required private identity policy
+        env:
+          IDENTITY_TERMS: ${{ secrets.PAI_PUBLICATION_IDENTITIES }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          terms = os.environ.get('IDENTITY_TERMS', '').strip()
+          if not terms:
+              raise SystemExit('Configure PAI_PUBLICATION_IDENTITIES before claiming the publication gate passes.')
+          destination = Path(os.environ['RUNNER_TEMP']) / 'identity-policy.txt'
+          destination.write_text(terms, encoding='utf-8')
+          destination.chmod(0o600)
+          PY
+      - name: Audit every tracked file in this checkout
+        run: |
+          python3 scripts/publication.py inventory --output "$RUNNER_TEMP/publication-manifest.json"
+          python3 scripts/publication.py check \
+            --manifest "$RUNNER_TEMP/publication-manifest.json" \
+            --deny-file "$RUNNER_TEMP/identity-policy.txt" \
+            --output "$RUNNER_TEMP/publication-audit.json"

@@ -1,0 +1,12 @@
+services:
+  pai-dev:
+    build:
+      context: .
+      dockerfile: docker/pai-dev.Dockerfile
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    tmpfs:
+      - /agent/state
+    network_mode: none
+    command: [sleep, infinity]

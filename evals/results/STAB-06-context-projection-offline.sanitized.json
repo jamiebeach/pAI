@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "change_id": "STAB-06-context-projection-offline",
+  "source_revision": "2fc342b",
+  "fixture": "inventoried-eight-writers-plus-unmarked-suffix",
+  "batches": 101,
+  "projections_per_batch": 100,
+  "iterations": 10100,
+  "legacy_dynamic_chars": 1811,
+  "unified_projection_chars": 692,
+  "character_reduction_fraction": 6.178906681391496e-1,
+  "projection_ms_p50": 4.0e-2,
+  "projection_ms_p95": 8.001e-2,
+  "projection_ms_max": 8.000599999999999e-1,
+  "temporal_query": true,
+  "grounded_source_count": 1,
+  "unsafe_fixture_present": false,
+  "error_visible": true,
+  "repetition_visible": true
+}
