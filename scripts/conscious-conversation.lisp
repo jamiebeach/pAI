@@ -152,9 +152,15 @@
             (error condition))))))
 
 (defun %conversation-path-contained-p (child parent)
-  (let ((child (uiop:ensure-pathname child :want-absolute t))
+  ;; UIOP:ENSURE-PATHNAME parses a bare string with Unix namestring rules
+  ;; regardless of host OS, so a native Windows drive path like "Z:/..."
+  ;; from an env var never satisfies :WANT-ABSOLUTE. Parse with native
+  ;; rules first; this is a no-op on POSIX hosts where the two agree.
+  (let ((child (uiop:ensure-pathname (uiop:parse-native-namestring child)
+                                      :want-absolute t))
         (parent (uiop:ensure-directory-pathname
-                 (uiop:ensure-pathname parent :want-absolute t))))
+                 (uiop:ensure-pathname (uiop:parse-native-namestring parent)
+                                        :want-absolute t))))
     (uiop:subpathp child parent)))
 
 (defun %conversation-guard-storage-boundary ()

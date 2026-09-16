@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -61,6 +62,43 @@ class PaiContainerStateTests(unittest.TestCase):
                 (target / "container-state-import.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["evidence"], report["evidence"])
+
+    def test_import_recovers_a_still_open_source_wal_instead_of_dropping_it(
+        self,
+    ) -> None:
+        # Regression: the copy step must never open the source database
+        # with SQLite (that is the operation that fails "unable to open
+        # database file" over a Windows Docker Desktop bind mount even
+        # though the file itself is perfectly readable) -- it must be a
+        # plain file copy. Proof that this still preserves durability: a
+        # row committed to the WAL but not yet checkpointed into the main
+        # file (only possible while a connection stays open) survives the
+        # import and reads back from the copy.
+        with tempfile.TemporaryDirectory(prefix="pai-volume-wal-") as temporary:
+            root = Path(temporary)
+            source = self.make_state(root)
+            events = source / "events.sqlite3"
+            connection = sqlite3.connect(events)
+            try:
+                connection.execute("PRAGMA journal_mode=WAL")
+                event_json = json.dumps({"id": 3, "type": "user-message"})
+                digest = hashlib.sha256(event_json.encode("utf-8")).hexdigest()
+                connection.execute(
+                    "INSERT INTO pai_events(event_id,event_json,integrity_hash) "
+                    "VALUES(3,?,?)",
+                    (event_json, digest),
+                )
+                connection.commit()
+                self.assertTrue((source / "events.sqlite3-wal").is_file())
+                target = root / "target"
+                import_container_state(source, target)
+            finally:
+                connection.close()
+            with closing(sqlite3.connect(target / "events.sqlite3")) as check:
+                count = check.execute(
+                    "SELECT COUNT(*) FROM pai_events"
+                ).fetchone()[0]
+            self.assertEqual(count, 3)
 
     def test_import_refuses_nonempty_target(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pai-volume-nonempty-") as temporary:

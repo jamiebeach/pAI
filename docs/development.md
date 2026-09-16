@@ -50,6 +50,24 @@ starts detect the existing event authority and omit initialization. Defaults kee
 paid and autonomous activity disabled. Existing-instance backups are never read
 by this path.
 
+### A second, persistent, Docker-based instance
+
+The path above is the local-provider-only quick start. For a persistent
+instance running in Docker (`pai-runtime` in `compose.yaml`, an OpenRouter
+provider profile, a web terminal) -- including a *second* instance cloned
+into a sibling directory on the same host -- see
+`scripts/pai_bootstrap.py new` and `docs/windows-clone-bootstrap-notes.md`.
+That doc records real problems hit bootstrapping a second instance this way
+on Windows (line-ending corruption on clone, a native-pathname bug, SQLite
+over a Windows bind mount, an image-tag collision between sibling
+instances, an unconfigurable storage-partition constant) and what changed
+in this repo as a result -- read it before assuming a fresh clone "just
+works" on Windows.
+
+To migrate an existing (non-pAI) agent's event history and memory into a
+freshly cloned instance rather than starting empty, see
+`scripts/pai_bootstrap.py clone-legacy-agent`.
+
 The release qualification performs this flow with synthetic identity and model
 values, no provider credential, and networking disabled. It then restarts from
 the same event database and deletes only the derived database to prove that the

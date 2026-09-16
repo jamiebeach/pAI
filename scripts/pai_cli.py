@@ -59,6 +59,12 @@ def validate_persona_name(value: str) -> str:
     return name
 
 
+def validate_agent_id(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value):
+        raise SystemExit("--agent-id must be a stable identifier")
+    return value
+
+
 def validate_openrouter_model_slug(value: str) -> str:
     """Validate an explicit OpenRouter author/model identifier."""
     if (
@@ -925,6 +931,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="generic 'dev' or a profile name below STATE/personas/"
     )
     parser.add_argument(
+        "--agent-id", default="q45-conversation-dev",
+        help=(
+            "storage partition key inside this instance's own event/memory "
+            "database (not shared across instances). The default is a "
+            "historical constant kept for compatibility with instances "
+            "already running under it; a fresh instance may set any stable "
+            "identifier. This is plumbing, not identity -- persona and "
+            "memory content carry identity, per --persona above."
+        ),
+    )
+    parser.add_argument(
         "--import-persona", nargs=2, metavar=("NAME", "SOURCE_JSON"),
         dest="persona_import",
         help="import identity/voice into ignored local state, then exit"
@@ -1264,6 +1281,7 @@ def run(args: argparse.Namespace) -> int:
     migration_environment = memory_migration_environment(args)
     embedding_endpoint = validate_embedding_endpoint(args.embedding_endpoint)
     persona_name = validate_persona_name(args.persona)
+    validate_agent_id(args.agent_id)
     if args.persona_import:
         imported_name = validate_persona_name(args.persona_import[0])
         target = import_persona(repo, state, imported_name,
@@ -1434,7 +1452,7 @@ def run(args: argparse.Namespace) -> int:
             # environment above replaces this sentinel with a valid port.
             "PAI_PG_PORT": "0",
             "PAI_DEV_DATABASE_LABEL": "pai-cli-clone-no-database-connection",
-            "PAI_AGENT_ID": getattr(args, "agent_id", "q45-conversation-dev"),
+            "PAI_AGENT_ID": args.agent_id,
             "PAI_CONVERSATION_ENDPOINT": endpoint,
             "PAI_CONVERSATION_MODEL": model,
             "PAI_CONVERSATION_PERSONA": persona_name,

@@ -1,4 +1,7 @@
 services:
+  # Offline-load qualification harness: read-only, no network. See
+  # docs/qualification.md. Do not add credentials or network access here --
+  # use pai-runtime below for an interactive or persistent instance.
   pai-dev:
     build:
       context: .
@@ -10,3 +13,94 @@ services:
       - /agent/state
     network_mode: none
     command: [sleep, infinity]
+
+  # Persistent instance runtime. See docs/clone-runbook.md and
+  # docs/tailscale-web-terminal-runbook.md.
+  #
+  # The image tag is project-scoped by default (COMPOSE_PROJECT_NAME, which
+  # Compose derives from the working directory unless overridden). Two
+  # instances cloned into sibling directories therefore build and keep
+  # separate local images automatically -- set COMPOSE_PROJECT_NAME
+  # explicitly in each instance's .env if directory names could collide
+  # (e.g. both named "pai" on different drives). Building one instance's
+  # pai-runtime must never silently repoint another instance's image tag.
+  pai-runtime:
+    image: ${COMPOSE_PROJECT_NAME:-pai}-local:development
+    build:
+      context: .
+      dockerfile: docker/pai-dev.Dockerfile
+    init: true
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      PAI_WEB_USERNAME: ${PAI_WEB_USERNAME:-pai}
+      PAI_WEB_PASSWORD: ${PAI_WEB_PASSWORD:-}
+      PAI_CONTAINER_PROFILE: persistent-runtime-v1
+      PAI_CONTEXT_GRAPH_RUNTIME_PROFILE: ${PAI_CONTEXT_GRAPH_RUNTIME_PROFILE:-direct-v6}
+      PAI_CONTEXT_GRAPH_GENERATION_BUDGET_MICROUSD: ${PAI_CONTEXT_GRAPH_GENERATION_BUDGET_MICROUSD:-2500000}
+      PAI_CONTEXT_GRAPH_PRIOR_EXPOSURE_MICROUSD: ${PAI_CONTEXT_GRAPH_PRIOR_EXPOSURE_MICROUSD:?set cumulative predecessor KG exposure before runtime startup}
+      PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID: ${PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID:-}
+    ports:
+      - "127.0.0.1:${PAI_WEB_PORT:-8080}:${PAI_WEB_PORT:-8080}"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - pai-source:/workspace
+      - pai-state:/var/lib/pai
+      - pai-cache:/home/pai/.cache
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777
+
+  # One-shot offline importer: installs a stopped instance's state (from
+  # .clone-state, read-only) into the empty pai-state volume above. See
+  # "Copy the current stopped development state" in docs/clone-runbook.md.
+  #
+  # Windows note: SQLite's file-locking primitives are unreliable over a
+  # Docker Desktop bind mount from an NTFS host path (reads over the ":ro"
+  # mount below can fail with "unable to open database file" even though
+  # the file opens and PRAGMA-only statements succeed). If that happens,
+  # checkpoint each source .sqlite3 file's WAL on the host first
+  # (`PRAGMA wal_checkpoint(TRUNCATE)`, e.g. via
+  # scripts/pai_bootstrap.py checkpoint-wal) so the file has no companion
+  # -wal/-shm it would need to lock; this is a no-op on a host where the
+  # bind mount already behaves correctly.
+  pai-state-import:
+    image: ${COMPOSE_PROJECT_NAME:-pai}-local:development
+    build:
+      context: .
+      dockerfile: docker/pai-dev.Dockerfile
+    profiles:
+      - ops
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    working_dir: /workspace
+    command:
+      - python3
+      - scripts/import_container_state.py
+      - /import-state
+      - /var/lib/pai
+    volumes:
+      - pai-source:/workspace
+      - ./.clone-state:/import-state:ro
+      - pai-state:/var/lib/pai
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777
+
+volumes:
+  pai-source:
+  pai-state:
+  pai-cache:

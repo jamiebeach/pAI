@@ -75,3 +75,4 @@ Thumbs.db
 /.test-logs/
 
 CodexAssessment*.md
+docs/multi-instance-fleet-design.md

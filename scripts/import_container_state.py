@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 import tempfile
 
@@ -16,7 +18,7 @@ import tempfile
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
-from pai_cli import backup_sqlite_database, inspect_state_databases  # noqa: E402
+from pai_cli import inspect_state_databases  # noqa: E402
 
 
 EXCLUDED_DIRECTORIES = {
@@ -33,6 +35,35 @@ def _reject_symlinks(root: Path) -> None:
     for path in (root, *root.rglob("*")):
         if path.is_symlink():
             raise SystemExit(f"state import refuses symbolic link {path}")
+
+
+def _copy_stopped_sqlite_database(source: Path, destination: Path) -> None:
+    """Byte-copy one SQLite database (plus any WAL/SHM) from a stopped source.
+
+    Unlike pai_cli.backup_sqlite_database's online SQLite-backup-API copy
+    (used elsewhere against a live database), this never opens the source
+    with SQLite -- it is a plain file copy. That matters on Windows: Docker
+    Desktop bind-mounting an NTFS host path does not reliably support the
+    file locking SQLite needs even for a read-only open, which fails with
+    "unable to open database file" on a source mounted read-only, even
+    though the plain file itself is perfectly readable. A stopped source has
+    no live writer to protect against, so the online-backup safety this
+    sidesteps has nothing to protect here; integrity is instead verified by
+    opening the destination copy (on a normal volume) after the copy.
+    """
+    if not source.is_file():
+        return
+    if destination.exists():
+        raise SystemExit(f"refusing to overwrite SQLite copy {destination}")
+    shutil.copy2(source, destination)
+    for suffix in ("-wal", "-shm"):
+        companion = source.with_name(source.name + suffix)
+        if companion.is_file():
+            shutil.copy2(companion, destination.with_name(destination.name + suffix))
+    with closing(sqlite3.connect(destination)) as verify:
+        (status,) = verify.execute("PRAGMA integrity_check").fetchone()
+        if status != "ok":
+            raise SystemExit(f"SQLite integrity check failed for {destination}: {status}")
 
 
 def import_container_state(source: Path, target: Path) -> dict[str, object]:
@@ -59,10 +90,10 @@ def import_container_state(source: Path, target: Path) -> dict[str, object]:
 
         # Projection first and authority second preserves the established
         # backup ordering: the event ledger may be ahead, never the projection.
-        backup_sqlite_database(
+        _copy_stopped_sqlite_database(
             source / "derived.sqlite3", staging / "derived.sqlite3"
         )
-        backup_sqlite_database(
+        _copy_stopped_sqlite_database(
             source / "events.sqlite3", staging / "events.sqlite3"
         )
         evidence = inspect_state_databases(
