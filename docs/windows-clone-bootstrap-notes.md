@@ -136,3 +136,77 @@ value ends up in the event/memory database is the one every later
    -- an empty `pai-state` volume plus a plausible-looking `PAI_AGENT_ID`
    produces the same "uninitialized" error as item 2, for an unrelated
    reason (no ledger there at all yet).
+
+## Known gaps, not yet fixed
+
+### 0. Verify the migration source against the running container's mounts
+
+The most expensive mistake in this session was migrating from a plausible-
+looking but stale event ledger. The legacy agent's repository contained an
+`events.jsonl` that had been frozen for over a month; its live ledger was
+bind-mounted from a different directory entirely, under a per-deployment
+`data/<deployment>/state/` path. Nothing about the stale file looked wrong
+in isolation -- it parsed, it was internally consistent, it had the right
+shape, and it ended on a plausible date.
+
+Before choosing any migration source, run `docker inspect <container>
+--format '{{range .Mounts}}...'` (or the equivalent for however the agent
+runs) and take the ledger from wherever the process is *actually* writing.
+Cross-check the newest event's timestamp against the wall clock and against
+the agent's last known conversation. A month-wide gap between "last event in
+the file" and "last time someone talked to it" means the wrong file.
+
+### 1. Migrated dialogue never reaches the conversation-history window
+
+A migrated agent starts every conversation with a structurally empty
+history tail, because two filters block the two available paths:
+
+- Pass-through legacy events keep their original shape, which in at least
+  one real legacy schema has no `agent_id` field. `conscious-conversation-history`
+  (`src/mind/conscious/conversation-runtime.lisp`) selects on
+  `(equal agent-id (gethash "agent_id" event))`, so those events are all
+  rejected.
+- The normalized `historical-user-message-imported` /
+  `historical-agent-message-imported` receipts *do* carry `agent_id` and
+  `persona_id`, but `:recent-conversation`
+  (`src/adapters/sqlite/sqlite-event-authority.lisp`) queries only
+  `user-message`/`agent-message`/`model-response`, so they are never fetched.
+
+For a *lineage* import into a different persona this is correct and
+deliberate -- imported dialogue is non-stimulus by design. For a
+*continuity* migration, where the source agent and destination persona are
+the same identity, it means she arrives unable to see her own last
+conversation without going looking for it.
+
+Leading fix: include the historical receipt types in `:recent-conversation`
+and teach `conscious-conversation-history` to accept them, gated so that
+lineage imports keep today's behavior. Note this consumes the
+`conversation-evidence` character budget (48000 in
+`solicited-conversation-dev`) with imported history, so it needs a budget
+story, and it changes live context assembly for every migrated agent --
+design it against the development instance first.
+
+### 2. Recency is not answerable through similarity search
+
+"What did we last talk about" is a chronological question, but the only
+retrieval surface available early in a migration is embedding similarity
+over memory nodes, which has no recency bias. Observed directly: an agent
+whose newest memory node was minutes old confidently reported a
+three-week-old conversation as the most recent, because that node was
+semantically closer to the phrasing of the question.
+
+Episode sealing eventually fixes this by providing a time-ordered index,
+but see item 3. A cheap complementary fix is an explicit recency-ordered
+recall affordance (most-recent-N turns or episodes by timestamp) rather
+than making the agent express a temporal query through a similarity tool.
+
+### 3. Episode sealing order is wrong for a continuity migration
+
+Sealing processes the historical receipts in ascending id order, i.e.
+oldest conversation first. That is the right default for building a
+complete index, but for a continuity migration it means the single most
+important conversation -- the last one before the cutover -- is sealed
+last, hours of processing and a meaningful amount of provider spend later,
+and may never be reached if a budget ceiling binds first. Consider sealing
+newest-first, or seeding a small recent window before starting the
+chronological backfill.
