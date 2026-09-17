@@ -897,10 +897,6 @@
   (declare (ignore transport-fn on-attempt-failure retryable-failure-fn))
   (%conversation-http-model-call messages endpoint model temperature
                                   :tools tools :tool-choice tool-choice))
-(defun %conversation-provider-retryable-non-timeout-failure-p
-    (failure-code http-status)
-  (declare (ignore failure-code http-status))
-  nil)
 (defun %conversation-response-message (response)
   (gethash "message" (aref (gethash "choices" response) 0)))
 (defun %conversation-json-present-p (value)

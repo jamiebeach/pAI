@@ -2151,18 +2151,16 @@ the complete failure receipt and may safely close this focus attempt."
                                      private-p)
                                      (*conscious-conversation-provider-profile*
                                        selected-provider-profile))
-                                 ;; A timeout here already gets a deliberate,
-                                 ;; smarter recovery below (retry once with
-                                 ;; reasoning disabled), so it is excluded from
-                                 ;; the generic backoff retry rather than
-                                 ;; delaying that recovery behind three more
-                                 ;; attempts of the same over-budget request.
+                                 ;; A timeout retries with backoff like any
+                                 ;; other transient failure -- a slow provider
+                                 ;; is not necessarily a reasoning-driven
+                                 ;; slowdown. The reasoning-disabled recovery
+                                 ;; below still fires afterward if every
+                                 ;; retry also times out.
                                  (%conversation-http-model-call-with-retry
                                   messages *conscious-recursive-mind-endpoint*
                                   *conscious-recursive-mind-model* 0.3d0
-                                  :tools tools
-                                  :retryable-failure-fn
-                                  #'%conversation-provider-retryable-non-timeout-failure-p))))))))
+                                  :tools tools))))))))
                    (let ((provider-message
                            (%conversation-response-message response)))
                      (if (and (not reasoning-recovery-p)
