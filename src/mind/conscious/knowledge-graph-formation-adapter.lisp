@@ -516,7 +516,7 @@ one exact source substring."
 
 (defun %recursive-kg-model-call
     (messages tools opened-id thread-id phase output-tokens)
-  (declare (ignore output-tokens))
+  (let ((*conscious-conversation-max-output-tokens* output-tokens))
   (when (%recursive-operator-pending-p)
     (return-from %recursive-kg-model-call :preempted))
   (unless (%recursive-selected-call-admissible-p messages tools t "required")
@@ -571,7 +571,7 @@ one exact source substring."
                 "error_code" code "reason" reason "http_status" status
                 "condition_type" condition-type)
            :caused-by opened-id))
-        (error condition)))))
+        (error condition))))))
 
 (defun %recursive-kg-formation-provider
     (opened-payload opened-id)

@@ -1021,8 +1021,8 @@ Caller holds lock."
          (*conscious-recursive-mind-endpoint* (gethash "endpoint" *conscious-conversation-provider-profile*)))
     (multiple-value-bind (messages tools name output-tokens) (%ccg-model-request phase spec)
       (declare (ignore name))
-      (declare (ignore output-tokens))
-      (let* ((microusd (ceiling (* 1000000d0
+      (let* ((*conscious-conversation-max-output-tokens* output-tokens)
+             (microusd (ceiling (* 1000000d0
                                   (%conversation-openrouter-request-cost-bound
                                     messages *conscious-recursive-mind-endpoint*
                                     *conscious-recursive-mind-model* 0.1d0 tools "required")))))
@@ -1043,7 +1043,6 @@ Caller holds lock."
     (unless (eq t (gethash "zdr" (%conversation-openrouter-provider-policy)))
       (error "Reviewed graph requires explicit ZDR routing"))
     (multiple-value-bind (messages tools name output-tokens) (%ccg-model-request phase spec)
-      (declare (ignore output-tokens))
       (let* ((bound (%ccg-model-reservation phase spec nil opened-id
                                             (or ceiling-microusd
                                                 *conscious-context-graph-request-ceiling-microusd*))))
@@ -1053,7 +1052,7 @@ Caller holds lock."
                (response
                (handler-case
                    (%recursive-kg-model-call messages tools opened-id
-                     (format nil "thread:reviewed-graph-v2:~d" opened-id) phase nil)
+                     (format nil "thread:reviewed-graph-v2:~d" opened-id) phase output-tokens)
                  (error (condition)
                    (let* ((elapsed-seconds
                             (/ (- (get-internal-real-time) call-started-at)
