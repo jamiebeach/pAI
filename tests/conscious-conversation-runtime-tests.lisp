@@ -1574,6 +1574,67 @@
              (and caught (search "unspecified" caught)
                   (null (search "NIL" caught)))))
 
+;;; --- Nous Portal as a second OpenRouter-wire-compatible provider --------
+
+(let ((*conscious-conversation-provider-profile*
+        (obj "provider" "nous-portal"
+             "endpoint" "https://inference-api.nousresearch.com/v1/chat/completions"
+             "model" "xiaomi/mimo-v2.5")))
+  (q45-check "a correctly declared Nous Portal endpoint is wire-compatible"
+             (%conversation-openrouter-wire-compatible-endpoint-p
+              "https://inference-api.nousresearch.com/v1/chat/completions"))
+  (q45-check "a correctly declared Nous Portal endpoint is authorized"
+             (%conversation-authorized-endpoint-p
+              "https://inference-api.nousresearch.com/v1/chat/completions"))
+  (q45-check "a Nous Portal endpoint is not classified as literally OpenRouter"
+             (not (%conversation-openrouter-endpoint-p
+                   "https://inference-api.nousresearch.com/v1/chat/completions")))
+  (q45-check "Nous Portal reads its own API key env var, not OpenRouter's"
+             (equal "NOUS_PORTAL_API_KEY"
+                    (%conversation-remote-provider-api-key-env-name
+                     "https://inference-api.nousresearch.com/v1/chat/completions")))
+  (q45-check "Nous Portal earns the same memory-disclosure class as OpenRouter"
+             (string= "remote-zdr"
+                      (%conversation-provider-class
+                       "https://inference-api.nousresearch.com/v1/chat/completions"))))
+
+(let ((*conscious-conversation-provider-profile*
+        (obj "provider" "openrouter"
+             "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+             "model" "xiaomi/mimo-v2.5")))
+  (q45-check "OpenRouter itself is unaffected: still wire-compatible"
+             (%conversation-openrouter-wire-compatible-endpoint-p
+              "https://openrouter.ai/api/v1/chat/completions"))
+  (q45-check "OpenRouter itself is unaffected: still classified as literally OpenRouter"
+             (%conversation-openrouter-endpoint-p
+              "https://openrouter.ai/api/v1/chat/completions"))
+  (q45-check "OpenRouter reads its own API key env var"
+             (equal "OPENROUTER_API_KEY"
+                    (%conversation-remote-provider-api-key-env-name
+                     "https://openrouter.ai/api/v1/chat/completions")))
+  (q45-check "OpenRouter still earns remote-zdr"
+             (string= "remote-zdr"
+                      (%conversation-provider-class
+                       "https://openrouter.ai/api/v1/chat/completions"))))
+
+(let ((*conscious-conversation-provider-profile*
+        (obj "provider" "nous-portal"
+             "endpoint" "https://inference-api.nousresearch.com/v1/chat/completions"
+             "model" "xiaomi/mimo-v2.5")))
+  (q45-check "a profile declaring Nous Portal does not authorize OpenRouter's endpoint"
+             (not (%conversation-authorized-endpoint-p
+                   "https://openrouter.ai/api/v1/chat/completions")))
+  (q45-check "an unrelated remote endpoint is never authorized regardless of profile"
+             (not (%conversation-authorized-endpoint-p
+                   "https://api.example.com/v1/chat/completions"))))
+
+(let ((*conscious-conversation-provider-profile* nil))
+  (q45-check "with no profile bound, nothing is treated as a known remote provider"
+             (and (not (%conversation-openrouter-wire-compatible-endpoint-p
+                        "https://inference-api.nousresearch.com/v1/chat/completions"))
+                  (null (%conversation-remote-provider-api-key-env-name
+                         "https://inference-api.nousresearch.com/v1/chat/completions")))))
+
 ;;; --- honoring a provider-declared Retry-After ----------------------------
 
 (let ((headers (make-hash-table :test 'equal)))

@@ -65,6 +65,37 @@ def validate_agent_id(value: str) -> str:
     return value
 
 
+# Remote providers confirmed to speak OpenRouter's chat-completions wire
+# dialect (usage.cost and friends), each keyed to its own credential env
+# var. A provider profile still owns its own endpoint/model; this only
+# says which env var holds the key for whichever profile gets selected.
+# See docs/nous-portal-provider-support-file-design-20260917.md.
+REMOTE_PROVIDER_API_KEY_ENV = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "nous-portal": "NOUS_PORTAL_API_KEY",
+}
+
+
+def remote_provider_api_key_env_name(profile: object, environ: dict) -> str:
+    """The env var holding PROFILE's credential, once confirmed present.
+
+    Raises SystemExit (not a return value) for every failure mode, so a
+    caller cannot accidentally proceed on an unchecked None: an
+    unrecognized profile shape, an undeclared/unknown provider, or a
+    declared provider whose credential is absent from ENVIRON.
+    """
+    declared_provider = profile.get("provider") if isinstance(profile, dict) else None
+    if declared_provider not in REMOTE_PROVIDER_API_KEY_ENV:
+        raise SystemExit(
+            "--provider-profile is not a declared remote provider profile "
+            f"(must declare one of: {', '.join(sorted(REMOTE_PROVIDER_API_KEY_ENV))})"
+        )
+    key_env_name = REMOTE_PROVIDER_API_KEY_ENV[declared_provider]
+    if not environ.get(key_env_name):
+        raise SystemExit(f"{key_env_name} is missing; no request was made")
+    return key_env_name
+
+
 def validate_openrouter_model_slug(value: str) -> str:
     """Validate an explicit OpenRouter author/model identifier."""
     if (
@@ -1316,8 +1347,6 @@ def run(args: argparse.Namespace) -> int:
         )
     if args.provider == "openrouter":
         reasoning_mode, reasoning_effort = openrouter_reasoning_override(args)
-        if not os.environ.get("OPENROUTER_API_KEY"):
-            raise SystemExit("OPENROUTER_API_KEY is missing; no request was made")
         if args.request_limit is not None and args.request_limit <= 0:
             raise SystemExit("deprecated --request-limit, when supplied, must be positive")
         if args.request_limit is not None:
@@ -1338,8 +1367,7 @@ def run(args: argparse.Namespace) -> int:
         profiles_path = repo / "config" / "conscious-provider-profiles.json"
         document = json.loads(profiles_path.read_text(encoding="utf-8"))
         profile = document.get("profiles", {}).get(args.provider_profile)
-        if not isinstance(profile, dict) or profile.get("provider") != "openrouter":
-            raise SystemExit("--provider-profile is not a declared OpenRouter profile")
+        remote_provider_api_key_env_name(profile, os.environ)
         if profile.get("publication_role") != "proposal-only":
             raise SystemExit("provider profile is not authorized for conversation proposals")
         endpoint = profile.get("endpoint")

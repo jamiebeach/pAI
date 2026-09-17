@@ -107,6 +107,35 @@
         "stop_on_cost_anomaly": true,
         "retry_limit": 0
       }
+    },
+    "replace-with-nous-portal-profile-name": {
+      "provider": "nous-portal",
+      "endpoint": "https://inference-api.nousresearch.com/v1/chat/completions",
+      "model": "replace-with-provider/model-slug",
+      "role": "human-facing-renderer",
+      "publication_role": "proposal-only",
+      "allowed_purposes": [
+        "respond"
+      ],
+      "context_capacity_tokens": 0,
+      "reasoning": {
+        "enabled": false
+      },
+      "requires_structured_output": false,
+      "requires_native_tool_calls": true,
+      "supports_parallel_tool_calls_parameter": false,
+      "provider_routing": {
+        "max_price_usd_per_million": {
+          "prompt": 0.0,
+          "completion": 0.0
+        }
+      },
+      "budget_contract": {
+        "cumulative_cost_ceiling_usd_required": true,
+        "stop_on_missing_usage": true,
+        "stop_on_cost_anomaly": true,
+        "retry_limit": 0
+      }
     }
   }
 }

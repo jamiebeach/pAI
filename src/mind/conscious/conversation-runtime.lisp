@@ -499,9 +499,45 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
          (string= endpoint (gethash "endpoint" profile ""))
          (string= endpoint "https://openrouter.ai/api/v1/chat/completions"))))
 
+(defun %conversation-nous-portal-endpoint-p (endpoint)
+  "Nous Portal's chat-completions response is OpenRouter-shaped, verbatim
+-- usage.cost, usage.cost_details, the same gen-<id> format -- confirmed
+against a real account (2026-09-17), not assumed. Its mimo-v2.5 route
+landed on the model's own creator directly (provider: Xiaomi) rather than
+OpenRouter's own routing choice for the same model (provider: Novita) at
+the time this was written, which is the actual reason to have a second
+provider at all, not redundancy for its own sake. Streaming and a real
+error response remain unconfirmed; see
+docs/nous-portal-provider-support-file-design-20260917.md."
+  (let ((profile *conscious-conversation-provider-profile*))
+    (and (hash-table-p profile)
+         (string= "nous-portal" (gethash "provider" profile ""))
+         (string= endpoint (gethash "endpoint" profile ""))
+         (string= endpoint
+                  "https://inference-api.nousresearch.com/v1/chat/completions"))))
+
+(defun %conversation-openrouter-wire-compatible-endpoint-p (endpoint)
+  "True for any remote endpoint confirmed to speak OpenRouter's specific
+response extensions (usage.cost and friends), not just the OpenAI chat-
+completions shape generally. Governs admission, reservation, charge
+extraction, retry pacing, and OpenRouter-specific request-shape
+adjustments alike -- all of it reused as-is across every endpoint this
+returns true for, per the confirmed wire compatibility. A provider that
+only speaks plain OpenAI shape, with no usage.cost, would need its own
+charge path and would not belong in this function; none exists yet."
+  (or (%conversation-openrouter-endpoint-p endpoint)
+      (%conversation-nous-portal-endpoint-p endpoint)))
+
+(defun %conversation-remote-provider-api-key-env-name (endpoint)
+  "Which environment variable holds the credential for this endpoint's
+provider. NIL for anything not a known remote provider."
+  (cond ((%conversation-openrouter-endpoint-p endpoint) "OPENROUTER_API_KEY")
+        ((%conversation-nous-portal-endpoint-p endpoint) "NOUS_PORTAL_API_KEY")
+        (t nil)))
+
 (defun %conversation-authorized-endpoint-p (endpoint)
   (or (%conversation-loopback-endpoint-p endpoint)
-      (%conversation-openrouter-endpoint-p endpoint)))
+      (%conversation-openrouter-wire-compatible-endpoint-p endpoint)))
 
 (declaim (ftype (function () *)
                 %conversation-openrouter-reconcile-pending-settlements))
@@ -609,8 +645,17 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
       (values (vector) (vector) (vector))))
 
 (defun %conversation-provider-class (endpoint)
+  "Governs memory disclosure: a budget profile whitelists which classes
+may see private memory content, so this label carries real privacy
+weight, not just telemetry. Nous Portal earns the same 'remote-zdr' class
+as OpenRouter by an explicit operator decision (2026-09-17), despite
+having no equivalent declared privacy guarantee in its own API -- the
+byok/OpenRouter-shaped response suggested a similar underlying posture,
+and the operator reviewed and chose the provider directly. Revisit if
+Nous Portal's actual data-retention policy is later confirmed to differ."
   (cond ((%conversation-loopback-endpoint-p endpoint) "local")
-        ((%conversation-openrouter-endpoint-p endpoint) "remote-zdr")
+        ((%conversation-openrouter-wire-compatible-endpoint-p endpoint)
+         "remote-zdr")
         (t (error "Conversation endpoint has no semantic provider class"))))
 
 (defun %conversation-context-budget-profile (&optional profile)
@@ -1809,7 +1854,8 @@ contract."
           ;; fully valid tool request unroutable. The trusted response adapter
           ;; independently enforces exactly one call, so omission weakens no
           ;; pAI authority boundary.
-          (when (or (not (%conversation-openrouter-endpoint-p endpoint))
+          (when (or (not (%conversation-openrouter-wire-compatible-endpoint-p
+                          endpoint))
                     (eq t
                         (gethash
                          "supports_parallel_tool_calls_parameter"
@@ -1821,16 +1867,24 @@ contract."
                    (search "qwen" (string-downcase model)))
           (setf (gethash "chat_template_kwargs" payload)
                 (obj "enable_thinking" nil)))
-        (when (%conversation-openrouter-endpoint-p endpoint)
+        (when (%conversation-openrouter-wire-compatible-endpoint-p endpoint)
           (let ((profile *conscious-conversation-provider-profile*))
             ;; Absence is meaningful: it delegates reasoning behavior to the
             ;; selected model instead of transporting a different model's
             ;; profile switch (mandatory-reasoning endpoints reject false).
+            ;; Sending this to a non-OpenRouter wire-compatible endpoint is
+            ;; safe: it is only ever sent when the profile itself declares
+            ;; it, so a profile that omits "reasoning" sends nothing new.
             (when (nth-value 1 (gethash "reasoning" profile))
               (setf (gethash "reasoning" payload)
-                    (gethash "reasoning" profile)))
-            (setf (gethash "provider" payload)
-                  (%conversation-openrouter-provider-policy))))
+                    (gethash "reasoning" profile)))))
+        ;; provider_routing (sort/require_parameters/zdr/data_collection) is
+        ;; OpenRouter's own routing DSL, not part of the shared wire dialect
+        ;; -- stays strictly OpenRouter-only, never sent to another provider
+        ;; that has no defined meaning for it.
+        (when (%conversation-openrouter-endpoint-p endpoint)
+          (setf (gethash "provider" payload)
+                (%conversation-openrouter-provider-policy)))
         payload)))
 
 (defparameter *conversation-request-bytes-per-prompt-token* 3
@@ -2498,7 +2552,7 @@ retained verbatim so ordinary session accounting remains authoritative."
                (plusp
                 *conscious-conversation-provider-inactivity-timeout-seconds*))
     (error "Provider connection and inactivity deadlines must be positive"))
-  (let* ((remote (%conversation-openrouter-endpoint-p endpoint))
+  (let* ((remote (%conversation-openrouter-wire-compatible-endpoint-p endpoint))
          (completion-bounded-p
            (not (null *conscious-conversation-max-output-tokens*)))
          (reservation
@@ -2517,7 +2571,11 @@ retained verbatim so ordinary session accounting remains authoritative."
       (when *conscious-conversation-private-provider-call-p*
         (incf *conscious-conversation-private-provider-attempts*)))
     (handler-case
-        (let* ((api-key (and remote (uiop:getenv "OPENROUTER_API_KEY")))
+        (let* ((api-key (and remote
+                             (let ((env-name
+                                     (%conversation-remote-provider-api-key-env-name
+                                      endpoint)))
+                               (and env-name (uiop:getenv env-name)))))
                (request-payload
                  (%conversation-http-request-payload
                   messages model temperature endpoint tools tool-choice))
@@ -2590,6 +2648,12 @@ retained verbatim so ordinary session accounting remains authoritative."
           ;; A streamed generation ID lets OpenRouter settle the actual cost
           ;; even when our response boundary timed out. Only fall back to the
           ;; old sealed maximum when no authoritative record is available.
+          ;; This reconciliation is OpenRouter's own generation-lookup API;
+          ;; for any other remote provider (including Nous Portal, whose
+          ;; own gen-<id> a lookup against OpenRouter will not recognize)
+          ;; the lookup simply fails and falls through to the same
+          ;; conservative reservation-based charge OpenRouter itself uses
+          ;; when reconciliation is unavailable -- proven safe, not a gap.
           (%conversation-openrouter-ambiguous-charge
            reservation completion-bounded-p
            (uiop:getenv "OPENROUTER_API_KEY")))
@@ -2651,7 +2715,7 @@ a slow failure (a real timeout, or a request that reached a provider and
 was rejected only after real processing) looks nothing like a fast one (an
 immediate gateway rejection, e.g. a bare rate limit), and distinguishing
 them by wall-clock time alone is often faster than reading error text."
-  (let* ((remote (%conversation-openrouter-endpoint-p endpoint))
+  (let* ((remote (%conversation-openrouter-wire-compatible-endpoint-p endpoint))
          (retry-limit
            (if remote (max 1 *conscious-conversation-provider-retry-limit*) 1))
          (backoff *conscious-conversation-provider-retry-backoff-seconds*))
@@ -2972,16 +3036,20 @@ them by wall-clock time alone is often faster than reading error text."
   ;; endpoint must leave no durable trace suggesting a turn was attempted.
   (unless (%conversation-authorized-endpoint-p endpoint)
     (error "Conversation provider endpoint is not authorized"))
-  (when (%conversation-openrouter-endpoint-p endpoint)
-    (unless (and (stringp (uiop:getenv "OPENROUTER_API_KEY"))
-                 (plusp (length (uiop:getenv "OPENROUTER_API_KEY"))))
-      (error "OPENROUTER_API_KEY is required before admission"))
+  (when (%conversation-openrouter-wire-compatible-endpoint-p endpoint)
+    (let ((key-env-name (%conversation-remote-provider-api-key-env-name endpoint)))
+      (unless (and key-env-name
+                   (stringp (uiop:getenv key-env-name))
+                   (plusp (length (uiop:getenv key-env-name))))
+        (error "~a is required before admission" (or key-env-name "a provider API key"))))
+    ;; Shared session-wide budget: one cost ceiling regardless of which
+    ;; remote provider is actually charged against it.
     (unless (%conversation-openrouter-budget-ready-p)
       (error "OpenRouter session budget is absent or exhausted"))
     (unless (string= model
                      (gethash "model"
                               *conscious-conversation-provider-profile* ""))
-      (error "Conversation model does not match the OpenRouter profile")))
+      (error "Conversation model does not match the selected provider profile")))
   (unless (and (stringp model) (plusp (length model)))
     (error "Conversation provider model must be explicit"))
   (unless (and (fboundp 'cognition-runtime-selected-p)

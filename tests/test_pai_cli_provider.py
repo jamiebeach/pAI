@@ -16,6 +16,7 @@ from pai_cli import (  # noqa: E402
     knowledge_graph_budget_environment,
     openrouter_reasoning_override,
     parse_args,
+    remote_provider_api_key_env_name,
     validate_openrouter_model_slug,
 )
 
@@ -211,6 +212,44 @@ class PaiCliProviderTests(unittest.TestCase):
         for value in ("no-author", "a/b/c", "a/model with spaces", "a/", "/b"):
             with self.subTest(value=value), self.assertRaises(SystemExit):
                 validate_openrouter_model_slug(value)
+
+    def test_openrouter_profile_reads_its_own_key(self) -> None:
+        profile = {"provider": "openrouter"}
+        self.assertEqual(
+            remote_provider_api_key_env_name(
+                profile, {"OPENROUTER_API_KEY": "sk-or-fixture"}
+            ),
+            "OPENROUTER_API_KEY",
+        )
+
+    def test_nous_portal_profile_reads_its_own_key_not_openrouters(self) -> None:
+        profile = {"provider": "nous-portal"}
+        self.assertEqual(
+            remote_provider_api_key_env_name(
+                profile, {"NOUS_PORTAL_API_KEY": "sk-nous-fixture"}
+            ),
+            "NOUS_PORTAL_API_KEY",
+        )
+        # Having only the OTHER provider's key present is not good enough --
+        # this was exactly the pre-existing bug the fix replaced.
+        with self.assertRaisesRegex(SystemExit, "NOUS_PORTAL_API_KEY"):
+            remote_provider_api_key_env_name(
+                profile, {"OPENROUTER_API_KEY": "sk-or-fixture"}
+            )
+
+    def test_missing_key_for_the_declared_provider_is_refused(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "OPENROUTER_API_KEY is missing"):
+            remote_provider_api_key_env_name({"provider": "openrouter"}, {})
+        with self.assertRaisesRegex(SystemExit, "NOUS_PORTAL_API_KEY is missing"):
+            remote_provider_api_key_env_name({"provider": "nous-portal"}, {})
+
+    def test_an_undeclared_or_unknown_provider_is_refused(self) -> None:
+        environ = {"OPENROUTER_API_KEY": "sk-or-fixture", "NOUS_PORTAL_API_KEY": "sk-nous-fixture"}
+        for profile in ({}, {"provider": "unknown-vendor"}, None, "not-a-dict"):
+            with self.subTest(profile=profile), self.assertRaisesRegex(
+                SystemExit, "not a declared remote provider profile"
+            ):
+                remote_provider_api_key_env_name(profile, environ)
 
 
 if __name__ == "__main__":
