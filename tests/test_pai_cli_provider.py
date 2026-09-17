@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -141,6 +142,103 @@ class PaiCliProviderTests(unittest.TestCase):
         ):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
                 context_graph_runtime_environment(parse_args(arguments))
+
+    def test_context_graph_runtime_profile_defaults_from_the_environment(self) -> None:
+        # This is the exact bug found live: .env sets
+        # PAI_CONTEXT_GRAPH_RUNTIME_PROFILE, but a naive parse_args() with a
+        # hardcoded "direct-v6" default silently discards it. The default
+        # must be sourced from the environment so .env alone is enough.
+        with mock.patch.dict(
+            "os.environ",
+            {"PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "reviewed-inference-v7"},
+            clear=False,
+        ):
+            configured = parse_args(
+                [
+                    "--knowledge-graph-formation",
+                    "--knowledge-graph-budget-usd", "5",
+                    "--knowledge-graph-prior-exposure-usd", "0",
+                    "--context-graph-budget-authorization-id", "fixture-auth-env",
+                ]
+            )
+        self.assertEqual(
+            context_graph_runtime_environment(configured),
+            {
+                "PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "reviewed-inference-v7",
+                "PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID": "fixture-auth-env",
+            },
+        )
+
+    def test_context_graph_runtime_profile_cli_flag_overrides_the_environment(
+        self,
+    ) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "reviewed-inference-v7"},
+            clear=False,
+        ):
+            configured = parse_args(["--context-graph-runtime-profile", "direct-v6"])
+        self.assertEqual(
+            context_graph_runtime_environment(configured),
+            {"PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "direct-v6"},
+        )
+
+    def test_context_graph_runtime_profile_defaults_to_direct_v6_when_unset(
+        self,
+    ) -> None:
+        with mock.patch.dict("os.environ", {}, clear=False):
+            import os as _os
+
+            _os.environ.pop("PAI_CONTEXT_GRAPH_RUNTIME_PROFILE", None)
+            configured = parse_args([])
+        self.assertEqual(
+            context_graph_runtime_environment(configured),
+            {"PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "direct-v6"},
+        )
+
+    def test_context_graph_budget_authorization_id_defaults_from_the_environment(
+        self,
+    ) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "reviewed-inference-v7",
+                "PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID": "env-sourced-auth",
+            },
+            clear=False,
+        ):
+            configured = parse_args(
+                [
+                    "--knowledge-graph-formation",
+                    "--knowledge-graph-budget-usd", "5",
+                    "--knowledge-graph-prior-exposure-usd", "0",
+                ]
+            )
+        self.assertEqual(
+            context_graph_runtime_environment(configured),
+            {
+                "PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "reviewed-inference-v7",
+                "PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID": "env-sourced-auth",
+            },
+        )
+
+    def test_context_graph_runtime_profile_rejects_an_unknown_value(self) -> None:
+        # Previously argparse's own `choices=` caught this for CLI-supplied
+        # values but silently allowed anything through the env-sourced
+        # default. Validation now happens once, uniformly, in
+        # context_graph_runtime_environment.
+        with mock.patch.dict(
+            "os.environ",
+            {"PAI_CONTEXT_GRAPH_RUNTIME_PROFILE": "not-a-real-profile"},
+            clear=False,
+        ):
+            configured = parse_args([])
+        with self.assertRaisesRegex(SystemExit, "not one of"):
+            context_graph_runtime_environment(configured)
+        with self.assertRaisesRegex(SystemExit, "not one of"):
+            context_graph_runtime_environment(
+                parse_args(["--context-graph-runtime-profile", "bogus"])
+            )
 
     def test_predecessor_exposure_cannot_exceed_cumulative_budget(self) -> None:
         configured = parse_args(

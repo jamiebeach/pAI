@@ -190,9 +190,23 @@ def knowledge_graph_budget_environment(
     return result
 
 
+CONTEXT_GRAPH_RUNTIME_PROFILES = (
+    "direct-v6",
+    "reviewed-inference-v7",
+    "reviewed-inference-v8",
+    "reviewed-inference-v9",
+)
+
+
 def context_graph_runtime_environment(args: argparse.Namespace) -> dict[str, str]:
     """Bind promotion as one reviewed owner/protocol profile."""
     profile = args.context_graph_runtime_profile
+    if profile not in CONTEXT_GRAPH_RUNTIME_PROFILES:
+        raise SystemExit(
+            f"--context-graph-runtime-profile {profile!r} is not one of "
+            f"{CONTEXT_GRAPH_RUNTIME_PROFILES} (PAI_CONTEXT_GRAPH_RUNTIME_PROFILE "
+            "supplies the default and is not validated by argparse choices)"
+        )
     if profile in (
         "reviewed-inference-v7",
         "reviewed-inference-v8",
@@ -879,23 +893,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--context-graph-runtime-profile",
-        choices=(
-            "direct-v6",
-            "reviewed-inference-v7",
-            "reviewed-inference-v8",
-            "reviewed-inference-v9",
-        ),
-        default="direct-v6",
+        default=os.environ.get("PAI_CONTEXT_GRAPH_RUNTIME_PROFILE", "direct-v6"),
         help=(
             "atomic graph owner/protocol pair; reviewed inference starts a "
-            "replacement projection and requires explicit budget accounting"
+            "replacement projection and requires explicit budget accounting. "
+            "Defaults to PAI_CONTEXT_GRAPH_RUNTIME_PROFILE from the "
+            "environment (validated against CONTEXT_GRAPH_RUNTIME_PROFILES "
+            "when the environment/subprocess env is built) so that .env "
+            "alone is enough -- this flag only needs to be passed to "
+            "override it explicitly."
         ),
     )
     parser.add_argument(
         "--context-graph-budget-authorization-id",
+        default=os.environ.get("PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID") or None,
         help=(
             "explicit cumulative authorization lineage shared by live graph "
-            "formation and selected-phase qualification"
+            "formation and selected-phase qualification. Defaults to "
+            "PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID from the environment."
         ),
     )
     parser.add_argument(
