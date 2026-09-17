@@ -339,13 +339,41 @@ cost_ceiling_usd 10`), not the launch flag.
 
 ### Status of the reviewed-graph blockage
 
-With items 5, 6 and 7 fixed, the reservation gate no longer refuses
-identity formation, an unknown outcome no longer bankrupts the private
-share, and a budget raise is no longer silently ignored. What remains is
-the constraint item 5 uncovered and nothing here addresses: the largest
-identity payloads still fail at transport with no HTTP status, against a
-120-second provider deadline. That is a time limit, not a price limit, so
-evidence payloads need chunking per phase -- chunking rather than
-truncation, since dropping evidence would silently discard the mentions the
-phase exists to extract. Until then the graph cannot complete on a
-large-corpus instance.
+With items 5, 6 and 7 fixed, the reservation gate no longer refuses identity
+formation, an unknown outcome no longer bankrupts the private share, and a
+budget raise is no longer silently ignored.
+
+A correction to an earlier claim in this document: the remaining failures
+are *not* known to be payload size, and "evidence payloads need chunking"
+was not supported by measurement. Chunking already exists and is already
+bounded in two places -- `%cgro-source-batches` partitions utterances at 8
+sources or 6000 bytes, and `context-graph-select-runtime-candidates` caps
+candidates at 48 ordinary and 64 reserved. Back-computing a successful
+`mentions` reservation of 2687 microUSD gives a prompt of roughly 2KB, not
+the 150KB-plus the theoretical ceiling analysis had assumed. The original
+`request-shape-too-large` refusals were real, but they were caused by the
+byte-per-token mispricing in item 5, not by genuinely oversized requests.
+
+What actually remains unexplained is narrower: some reviewed-graph calls
+fail at transport with no HTTP status, which classifies as
+`provider-outcome-ambiguous`. Established facts, for whoever picks this up:
+
+- The graph profile pins one provider with no fallback
+  (`"only": ["phala"], "allow_fallbacks": false`) alongside `zdr` and
+  `require_parameters`, so there is no second endpoint to absorb a failure.
+- That provider does currently serve the model within the profile's price
+  caps (prompt $0.30/M against a $0.33 cap), so routing is not obviously
+  impossible.
+- The provider deadline is 120 seconds, and a reasoning model on a single
+  pinned endpoint is a plausible way to exceed it, but this is untested.
+- `openrouter-reviewed-graph-muse` declares no `context_capacity_tokens`,
+  so the unbounded-outcome bound is incomputable for graph calls. That is
+  what made item 6's `:null` pending reachable, and it is worth deciding
+  whether the profile should declare a capacity (the endpoint reports
+  131072) rather than relying on the reservation stand-in.
+
+The next diagnostic step is to capture a failing call's elapsed time and
+error text. The `[knowledge graph provider]` line that prints http-status
+and classification did not appear in the instance log, so the failure is
+taking a path other than the one that diagnostic covers -- that discrepancy
+is itself the lead worth following.
