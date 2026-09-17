@@ -33,28 +33,18 @@ completion ceiling.")
   "Optional test/local transport below admission: (messages endpoint model temperature) -> response.")
 (defvar *conscious-conversation-model-call-sequence* 0)
 (defparameter *conscious-conversation-model-lease-seconds* 180)
-(defun %conversation-configured-provider-call-timeout-seconds ()
-  (let ((raw (uiop:getenv "PAI_CONVERSATION_PROVIDER_CALL_TIMEOUT_SECONDS")))
-    (if (or (null raw) (zerop (length raw)))
-        120
-        (handler-case
-            (let ((value (parse-integer raw :junk-allowed nil)))
-              (unless (<= 1 value 900) (error "timeout out of range"))
-              value)
-          (error ()
-            (error "Invalid PAI_CONVERSATION_PROVIDER_CALL_TIMEOUT_SECONDS"))))))
-(defparameter *conscious-conversation-provider-call-timeout-seconds*
-  (%conversation-configured-provider-call-timeout-seconds)
+(defparameter *conscious-conversation-provider-call-timeout-seconds* 120
   "Request-local wall-clock deadline for one provider cognitive quantum.
-Overridable with PAI_CONVERSATION_PROVIDER_CALL_TIMEOUT_SECONDS (1-900);
-120 unset. Some provider/routing combinations (a price-sorted backend under
-load, a reasoning-heavy request) can genuinely take longer than 120s to
-produce a real response rather than fail fast -- raising this trades a
-longer visible wait for fewer requests cut off mid-flight and retried.
 NIL remains an explicit experimental override that delegates completion to
-the provider and progress-aware transport, reachable only by dynamically
-binding this variable directly; ordinary runtime configuration uses the
-bounded default while retaining streaming and inactivity diagnostics.")
+the provider and progress-aware transport; ordinary runtime configuration uses
+the bounded default while retaining streaming and inactivity diagnostics.
+Not configured here: scripts/conscious-conversation.lisp owns the actual
+operator-facing knob (PAI_PROVIDER_CALL_TIMEOUT_SECONDS, and the durable
+'provider_call_timeout_seconds' /config-set setting, which wins over any
+launch-time value and applies live without a restart) and overwrites this
+defparameter's value right after loading the system -- a second,
+env-var-only config layer here was silently discarded every time and is
+not worth carrying.")
 (defparameter *conscious-conversation-provider-streaming-p* t
   "When true, OpenRouter Chat Completions are consumed as SSE streams.  The
 stream supplies observable progress and a final authoritative usage receipt;
