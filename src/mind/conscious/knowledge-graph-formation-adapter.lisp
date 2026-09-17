@@ -545,7 +545,7 @@ one exact source substring."
                       "knowledge_graph_formation" t "formation_phase" phase)
                  (lambda ()
                    (let ((*conscious-conversation-private-provider-call-p* t))
-                     (%conversation-http-model-call
+                     (%conversation-http-model-call-with-retry
                       messages *conscious-recursive-mind-endpoint*
                       *conscious-recursive-mind-model* 0.1d0
                       :tools tools :tool-choice "required"))))))
