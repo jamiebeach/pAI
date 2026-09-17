@@ -1244,6 +1244,84 @@
                               "status"
                               *conscious-conversation-last-accounting-anomaly*))))))
 
+;; Charging a whole context capacity as completion for one unobserved outcome
+;; is pessimistic past usefulness: at a million-token capacity it bills about
+;; half a dollar per ambiguous call, three of which exhausted a live
+;; instance's entire private cost share and paused its private cognition --
+;; the freeze this fallback exists to prevent.
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1048576
+              "provider_routing"
+              (obj "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0)))))
+  (let* ((prompt-reserve 0.001d0)
+         (bound (%conversation-openrouter-unbounded-outcome-cost-bound
+                 prompt-reserve))
+         (completion-part (- bound prompt-reserve))
+         (capacity-part (* (/ 1048576 1000000d0) 0.40d0))
+         (cap-part (* (/ *conversation-unbounded-outcome-completion-token-cap*
+                         1000000d0)
+                      0.40d0)))
+    (q45-check "ambiguous outcome charges the token cap, not context capacity"
+               (and (realp bound) (plusp bound)
+                    (< (abs (- completion-part cap-part)) 1d-9)
+                    (< completion-part capacity-part)))
+    (q45-check "ambiguous outcome charge stays far under a session ceiling"
+               (< bound 0.05d0))))
+
+;; A deferred settlement must carry a fallback the reconciler can charge.
+;; Reconciliation settles a pending generation only on an exact cost or a real
+;; fallback, so deferring without one pends forever and latches budget
+;; uncertainty permanently.
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              ;; No context_capacity_tokens: the outcome bound is incomputable.
+              "provider_routing"
+              (obj "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-private-provider-call-p* t)
+       (*conscious-conversation-private-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-pending-generation-settlements* nil)
+       (*conscious-conversation-last-accounting-anomaly* nil)
+       (*conscious-conversation-openrouter-generation-lookup-fn*
+         (lambda (generation-id api-key)
+           (declare (ignore generation-id api-key))
+           nil))
+       (caught nil))
+  (q45-check "an incomputable outcome bound is the condition guarded against"
+             (null (%conversation-openrouter-unbounded-outcome-cost-bound
+                    0.001d0)))
+  (handler-case
+      (%conversation-http-model-call
+       (list (obj "role" "user" "content" "no capacity fixture"))
+       "https://openrouter.ai/api/v1/chat/completions"
+       "xiaomi/mimo-v2.5" 0.3d0
+       :transport-fn
+       (lambda (&rest ignored)
+         (declare (ignore ignored))
+         (%conversation-provider-progress-observe
+          "gen-no-capacity-321" 12 1000 600 200 0)
+         (error "fixture stream interrupted")))
+    (error (condition) (setf caught condition)))
+  (let* ((pending
+           (first *conscious-conversation-pending-generation-settlements*))
+         (fallback (and pending (gethash "fallback_cost_usd" pending))))
+    (q45-check "a pending settlement always carries a chargeable fallback"
+               (and caught (realp fallback) (not (minusp fallback))))
+    (q45-check "liveness is restorable without an outcome bound"
+               (and (%conversation-openrouter-budget-ready-p)
+                    (null
+                     *conscious-conversation-pending-generation-settlements*)
+                    (not *conscious-conversation-provider-budget-uncertain-p*)))))
+
 (when (and (fboundp 'conscious-conversation-history)
            (fboundp 'conscious-conversation-turn))
   (let* ((events

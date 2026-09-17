@@ -1887,12 +1887,29 @@ stop."
             (* (/ completion-tokens 1000000d0)
                (coerce completion-price 'double-float))))))
 
+(defparameter *conversation-unbounded-outcome-completion-token-cap* 32768
+  "Completion tokens assumed when an open-ended ambiguous outcome is charged.
+
+Reserving the model's entire context capacity was pessimistic past the point
+of usefulness. A million-token capacity priced at the sealed maximum
+completion rate charges roughly half a dollar for one unknown outcome, while
+observed completions on the same profile run three orders of magnitude
+smaller. Three such fallbacks exhausted an instance's whole private cost
+share and paused its private cognition, which is the freeze this fallback
+exists to avoid.
+
+This cap stays far above any observed completion, so the charge remains
+deliberately pessimistic, but one unknown outcome can no longer consume a
+session's budget. It is a charge for an outcome nobody observed, not a
+measurement.")
+
 (defun %conversation-openrouter-unbounded-outcome-cost-bound (prompt-reserve)
   "Return an honest worst-case charge when an open-ended outcome is unknown.
 
 The request has no artificial completion cap, but the selected model still has
-a finite context capacity.  Reserving that entire capacity at the sealed
-maximum completion price is deliberately pessimistic and lets later cognition
+a finite context capacity.  Reserving capacity up to
+*CONVERSATION-UNBOUNDED-OUTCOME-COMPLETION-TOKEN-CAP* at the sealed maximum
+completion price is deliberately pessimistic and lets later cognition
 continue without pretending an ambiguous request was free."
   (let* ((profile *conscious-conversation-provider-profile*)
          (capacity (and (hash-table-p profile)
@@ -1907,7 +1924,9 @@ continue without pretending an ambiguous request was free."
          (integerp capacity) (plusp capacity)
          (numberp completion-price) (plusp completion-price)
          (+ (coerce prompt-reserve 'double-float)
-            (* (/ capacity 1000000d0)
+            (* (/ (min capacity
+                       *conversation-unbounded-outcome-completion-token-cap*)
+                  1000000d0)
                (coerce completion-price 'double-float))))))
 
 (defun %conversation-openrouter-generation-id-safe-p (generation-id)
@@ -2069,11 +2088,22 @@ to use its conservative fallback."
         "provider-outcome-ambiguous" settled-cost settled-cost
         "generation-reconciled" generation-id))
       ((%conversation-openrouter-generation-id-safe-p generation-id)
-       (let ((outcome-bound
-               (if completion-bounded-p
-                   reservation
-                   (%conversation-openrouter-unbounded-outcome-cost-bound
-                    reservation))))
+       ;; A deferred settlement must carry a fallback the reconciler can
+       ;; actually charge. Reconciliation only settles a pending generation
+       ;; when the exact cost arrives or the fallback is a real number, so
+       ;; deferring without one leaves it pending forever and latches
+       ;; budget uncertainty permanently -- the indefinite freeze this whole
+       ;; fallback path exists to prevent. RESERVATION is always real, so it
+       ;; stands in when no outcome bound can be computed.
+       (let* ((computed
+                (if completion-bounded-p
+                    reservation
+                    (%conversation-openrouter-unbounded-outcome-cost-bound
+                     reservation)))
+              (outcome-bound
+                (if (and (realp computed) (not (minusp computed)))
+                    computed
+                    reservation)))
          (%conversation-openrouter-defer-generation-settlement
           generation-id outcome-bound)
          (%conversation-openrouter-accounting-anomaly

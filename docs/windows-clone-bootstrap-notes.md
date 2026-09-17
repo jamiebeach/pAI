@@ -282,3 +282,70 @@ So evidence payload still needs bounding per phase, and it needs to be
 *chunking* rather than truncation: truncating evidence would silently drop
 the very mentions the phase exists to extract, which is the same class of
 invisible failure as the original bug. That remains unimplemented.
+
+### 6. An unobserved outcome was charged a whole context capacity
+
+When a provider call's outcome is unknown -- a timeout or dropped
+connection, which reports no HTTP status -- the cost cannot be measured, so
+a fallback charge is applied rather than pretending the call was free. The
+fallback reserved the model's *entire context capacity* as completion tokens
+at the sealed maximum completion price. On a million-token-capacity model
+that is roughly half a dollar per unknown outcome, against a measured
+average of $0.0016 per call: a 260-450x overcharge for a call nobody
+observed.
+
+Three such fallbacks exhausted a live instance's whole private cost share
+(`private_budget_percent` 50 of a $2 ceiling, so $1.00), which made every
+subsequent private call inadmissible and paused all private cognition --
+precisely the indefinite freeze the fallback exists to prevent. Its own
+ledger showed it: 6 requests accounting for $1.479281, with
+`Conservative accounting fallbacks: 3`.
+
+Fixed by capping the assumed completion at
+`*conversation-unbounded-outcome-completion-token-cap*` (32768), still far
+above any observed completion so the charge stays pessimistic, but no
+longer able to consume a session. Measured in production afterwards: the
+same ambiguous failure charged $0.0024 instead of about $0.42.
+
+A second hole in the same path: a deferred settlement stored
+`fallback_cost_usd` as `:null` when no bound could be computed, and
+reconciliation settles a pending generation only on an exact cost or a real
+fallback. Such a pending could never settle, latching budget uncertainty
+permanently. The reservation, always a real number, now stands in.
+
+### 7. A launch flag silently lost to a durable setting
+
+`%conversation-adopt-durable-startup-settings` makes durable runtime
+settings authoritative over launch flags. That is deliberate -- a setting an
+operator changed at runtime should survive a restart rather than being
+reverted by whatever flags the next launch carries -- but it was silent.
+
+The consequence: an instance first launched with `--cost-ceiling-usd 2`
+persisted `cost_ceiling_usd: 2.0`, and every later launch passing
+`--cost-ceiling-usd 5` ran at $2 with no indication. An operator raising a
+budget to unblock work saw no effect and no explanation.
+
+Divergences are now reported at startup, naming both values and where to
+change the durable one:
+
+```text
+[settings] PAI_CONVERSATION_COST_CEILING_MICROUSD: this launch asked for
+10000000; the durable setting is 2000000 and wins. Change it with the
+runtime setting, not the launch flag.
+```
+
+The durable value is changed through the operator surface (`/config-set
+cost_ceiling_usd 10`), not the launch flag.
+
+### Status of the reviewed-graph blockage
+
+With items 5, 6 and 7 fixed, the reservation gate no longer refuses
+identity formation, an unknown outcome no longer bankrupts the private
+share, and a budget raise is no longer silently ignored. What remains is
+the constraint item 5 uncovered and nothing here addresses: the largest
+identity payloads still fail at transport with no HTTP status, against a
+120-second provider deadline. That is a time limit, not a price limit, so
+evidence payloads need chunking per phase -- chunking rather than
+truncation, since dropping evidence would silently discard the mentions the
+phase exists to extract. Until then the graph cannot complete on a
+large-corpus instance.

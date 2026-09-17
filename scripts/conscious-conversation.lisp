@@ -741,12 +741,25 @@ independently audited before the ledger baseline may consume it."
      "affect_baseline_event_id" *conversation-affect-baseline-event-id*)))
 
 (defun %conversation-adopt-durable-startup-settings ()
-  "Make durable desired values authoritative before provider policy is built."
+  "Make durable desired values authoritative before provider policy is built.
+
+Durable values winning is deliberate: a runtime setting an operator changed
+should survive a restart rather than being silently reverted by whatever
+flags the last launch happened to carry. The hazard is the reverse
+direction -- a launch flag the operator believes is authoritative being
+replaced without a word. So every divergence between what this launch asked
+for and what the ledger already holds is reported, naming both values and
+how to change the durable one."
   (labels ((setting (key) (%conversation-call "runtime-settings-value" key))
            (put (name value)
-             (setf (uiop:getenv name)
-                   (cond ((eq value t) "1") ((null value) "0")
-                         (t (princ-to-string value))))))
+             (let* ((requested (uiop:getenv name))
+                    (adopted (cond ((eq value t) "1") ((null value) "0")
+                                   (t (princ-to-string value)))))
+               (when (and (stringp requested) (plusp (length requested))
+                          (not (string= requested adopted)))
+                 (format t "~&[settings] ~a: this launch asked for ~a; the durable setting is ~a and wins. Change it with the runtime setting, not the launch flag.~%"
+                         name requested adopted))
+               (setf (uiop:getenv name) adopted))))
     (setf *conversation-loop-mode* (setting "mind_loop")
           *conversation-curiosity-wake-seconds* (setting "curiosity_wake_seconds")
           *conversation-deliberate-curiosity-p* (setting "deliberate_curiosity")
