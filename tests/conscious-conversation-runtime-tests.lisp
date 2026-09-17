@@ -1452,6 +1452,94 @@
   (q45-check "a loopback endpoint never retries; it is a test seam, not a network"
              (and caught (= 1 calls))))
 
+;;; --- honoring a provider-declared Retry-After ----------------------------
+
+(let ((headers (make-hash-table :test 'equal)))
+  (setf (gethash "retry-after" headers) "7")
+  (let ((condition
+          (make-condition
+           'dex:http-request-too-many-requests
+           :body "" :status 429 :headers headers
+           :uri (quri:uri "https://openrouter.ai/api/v1/chat/completions")
+           :method :post)))
+    (q45-check "a numeric Retry-After header (lowercase key) is honored"
+               (= 7 (%conversation-provider-retry-after-seconds condition)))))
+
+(let ((headers (make-hash-table :test 'equal)))
+  (setf (gethash "Retry-After" headers) "not-a-number")
+  (let ((condition
+          (make-condition
+           'dex:http-request-too-many-requests
+           :body "" :status 429 :headers headers
+           :uri (quri:uri "https://openrouter.ai/api/v1/chat/completions")
+           :method :post)))
+    (q45-check "a non-numeric Retry-After header yields no override"
+               (null (%conversation-provider-retry-after-seconds condition)))))
+
+(let ((condition
+        (make-condition
+         'dex:http-request-too-many-requests
+         :body "" :status 429 :headers nil
+         :uri (quri:uri "https://openrouter.ai/api/v1/chat/completions")
+         :method :post)))
+  (q45-check "an absent Retry-After header yields no override"
+             (null (%conversation-provider-retry-after-seconds condition))))
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-provider-retry-limit* 3)
+       ;; Deliberately large so the test only completes quickly if the
+       ;; provider-declared Retry-After (0) actually overrode it.
+       (*conscious-conversation-provider-retry-backoff-seconds* 30d0)
+       (calls 0)
+       (retry-after-headers (make-hash-table :test 'equal))
+       (rate-limited
+         (progn
+           (setf (gethash "retry-after" retry-after-headers) "0")
+           (make-condition
+            'dex:http-request-too-many-requests
+            :body "" :status 429 :headers retry-after-headers
+            :uri (quri:uri "https://openrouter.ai/api/v1/chat/completions")
+            :method :post)))
+       (started (get-internal-real-time))
+       (result
+         (%conversation-http-model-call-with-retry
+          (list (obj "role" "user" "content" "rate-limited-then-succeed fixture"))
+          "https://openrouter.ai/api/v1/chat/completions"
+          "xiaomi/mimo-v2.5" 0.3d0
+          :transport-fn
+          (lambda (&rest ignored)
+            (declare (ignore ignored))
+            (incf calls)
+            (if (= calls 1)
+                (error rate-limited)
+                (obj "choices"
+                     (vector
+                      (obj "message"
+                           (obj "role" "assistant" "content" "ok")))
+                     "usage" (obj "cost" 0.0001d0))))))
+       (elapsed-seconds
+         (/ (- (get-internal-real-time) started)
+            (float internal-time-units-per-second 1d0))))
+  (q45-check "a rate-limited call still succeeds on retry"
+             (hash-table-p result))
+  (q45-check "the provider's own Retry-After is honored instead of the configured backoff"
+             (< elapsed-seconds 10)))
+
 ;; Charging a whole context capacity as completion for one unobserved outcome
 ;; is pessimistic past usefulness: at a million-token capacity it bills about
 ;; half a dollar per ambiguous call, three of which exhausted a live

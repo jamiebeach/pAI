@@ -2543,6 +2543,28 @@ large, unsupported media, unprocessable) will not succeed on retry."
       (and (integerp http-status)
            (or (= http-status 429) (>= http-status 500)))))
 
+(defun %conversation-provider-retry-after-seconds (condition)
+  "A provider-declared Retry-After delay from a failed HTTP response, in
+whole seconds, when present and expressible as a plain integer (the
+HTTP-date form is not handled -- providers rate-limiting an API almost
+always send the delta-seconds form). NIL when absent, unparseable, or
+outside a sane bound."
+  (and (typep condition 'dex:http-request-failed)
+       (let* ((headers (ignore-errors (dex:response-headers condition)))
+              (raw (and headers
+                        (cond
+                          ((hash-table-p headers)
+                           (or (gethash "retry-after" headers)
+                               (gethash "Retry-After" headers)))
+                          ((listp headers)
+                           (cdr (or (assoc "retry-after" headers :test #'string-equal)
+                                    (assoc :retry-after headers))))))))
+         (and (stringp raw)
+              (ignore-errors
+                (multiple-value-bind (seconds end) (parse-integer raw :junk-allowed t)
+                  (and seconds (= end (length raw))
+                       (<= 0 seconds 300) seconds)))))))
+
 (defun %conversation-http-model-call-with-retry
     (messages endpoint model temperature
      &key transport-fn (tools (vector)) tool-choice on-attempt-failure
@@ -2584,12 +2606,14 @@ condition-type) for every failed attempt, including the last."
                             (funcall retryable-failure-fn failure-code
                                      http-status)
                             (%conversation-openrouter-budget-ready-p))
-                       (progn
+                       (let ((wait (or (%conversation-provider-retry-after-seconds
+                                         condition)
+                                        backoff)))
                          (format *error-output*
                                  "~&[conversation] provider attempt ~a/~a failed (~a); retrying in ~as~%"
-                                 attempt retry-limit failure-code backoff)
+                                 attempt retry-limit failure-code wait)
                          (finish-output *error-output*)
-                         (sleep backoff)
+                         (sleep wait)
                          (setf backoff (* 2 backoff)))
                        (error condition)))))
           finally (error "Unreachable: provider retry loop exited without a result or a re-raised error"))))
