@@ -591,8 +591,13 @@ the outcome-unknown reservation remains charged to conservative exposure."
                     (fail "IDENTITY_CALL_FAILED"
                           (context-graph-call-failure-retryable-p condition)
                           (context-graph-call-failure-classification condition)))
-                  (error () (fail "IDENTITY_CALL_OUTCOME_AMBIGUOUS" t
-                                  "provider-outcome-ambiguous")))
+                  (error (condition)
+                    (format *error-output*
+                            "~&[identity call diagnostic] phase=~a condition-type=~a message=~a~%"
+                            phase (type-of condition) condition)
+                    (finish-output *error-output*)
+                    (fail "IDENTITY_CALL_OUTCOME_AMBIGUOUS" t
+                          "provider-outcome-ambiguous")))
               ;; A broken price/transport contract cannot be undone, but its
               ;; reported charge must not disappear behind a smaller reservation.
               (when (and (integerp charge) (> charge ceiling))

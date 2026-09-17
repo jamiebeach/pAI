@@ -1937,6 +1937,18 @@ stop."
               (coerce completion-price 'double-float))
            0d0))))
 
+(defvar *conscious-conversation-call-charge-usd* nil
+  "When bound to a number, accumulates only charges this call itself applied.
+
+A caller that needs its own cost cannot use the difference in the session
+ledger across its call: that ledger is global, and a settlement reconciled
+during the call -- admission checks reconcile pending settlements -- lands
+in the same counter. The difference then includes another call's charge, and
+a caller comparing it against its own reservation rejects a perfectly good
+response. Reconciliation increments the session ledger directly rather than
+through this function, so an accumulator only this function touches holds
+the current call's charge alone.")
+
 (defun %conversation-openrouter-apply-charge (cost &optional allow-overrun-p)
   "Apply one already-admitted charge to public and private session ledgers."
   (let ((next (+ *conscious-conversation-provider-spent-usd*
@@ -1945,6 +1957,8 @@ stop."
                (> next *conscious-conversation-cost-ceiling-usd*))
       (error "OpenRouter admitted charge exceeded the session ceiling"))
     (setf *conscious-conversation-provider-spent-usd* next)
+    (when (numberp *conscious-conversation-call-charge-usd*)
+      (incf *conscious-conversation-call-charge-usd* (coerce cost 'double-float)))
     (when *conscious-conversation-private-provider-call-p*
       (incf *conscious-conversation-private-provider-spent-usd*
             (coerce cost 'double-float)))))

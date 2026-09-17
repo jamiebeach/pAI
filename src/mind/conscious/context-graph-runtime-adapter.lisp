@@ -842,6 +842,16 @@ repair its next call without poisoning replay or failing the conversation."
                             0 (min 1000
                                    (length (format nil "~a" condition))))))))
 
+(defun %ccg-publish-owner-open-view (runtime owner)
+  "Install the generation owner's lock-protected opening table on its facade.
+
+Both objects are rebuildable members of one generation and every caller holds
+the context-graph lock.  Keeping one table is therefore safe and avoids an
+unbounded deep copy at every synchronization boundary."
+  (setf (pai.context-graph::context-graph-runtime-opens runtime)
+        (pai.context-graph::cgi-owner-opens owner))
+  runtime)
+
 (defun %ccg-sync (event-backend agent-id persona-id)
   "Cache only this generation; cold replay rechecks original source authority.
 No derived SQL graph writes occur on this read path. Obsolete openings that no
@@ -936,10 +946,9 @@ Caller holds lock."
       (setf (pai.context-graph::context-graph-runtime-last-event-id
               *conscious-context-graph-runtime*)
             (pai.context-graph::cgi-owner-last-id *conscious-context-graph-formation-owner*))
-      (setf (pai.context-graph::context-graph-runtime-opens
-              *conscious-context-graph-runtime*)
-            (pai.context-graph::%cg-detach
-              (pai.context-graph::cgi-owner-opens *conscious-context-graph-formation-owner*)))
+      (%ccg-publish-owner-open-view
+       *conscious-context-graph-runtime*
+       *conscious-context-graph-formation-owner*)
       (values *conscious-context-graph-runtime* source-fn events
               *conscious-context-graph-formation-owner*))))
 
@@ -1039,7 +1048,7 @@ Caller holds lock."
                                             (or ceiling-microusd
                                                 *conscious-context-graph-request-ceiling-microusd*))))
         (%ccg-await-provider-call-slot)
-        (let* ((before *conscious-conversation-provider-spent-usd*)
+        (let* ((*conscious-conversation-call-charge-usd* 0d0)
                (call-started-at (get-internal-real-time))
                (response
                (handler-case
@@ -1075,10 +1084,22 @@ Caller holds lock."
                             :charged-microusd known-charge))))))
         (when (member response '(:preempted :paused-budget))
           (return-from %ccg-model-call (values response 0)))
+        ;; This call's own charge, not the session ledger's movement. Admission
+        ;; checks reconcile pending settlements, so the ledger can advance by
+        ;; another call's charge inside this one's extent; attributing that
+        ;; here rejected valid responses as outcome-ambiguous.
         (let ((charge (round (* 1000000d0
-                                (- *conscious-conversation-provider-spent-usd* before)))))
+                                *conscious-conversation-call-charge-usd*))))
           (when (> charge bound)
-            (error "Reviewed graph transport charge exceeded its reservation"))
+            ;; The caller's handler classifies any error here as
+            ;; provider-outcome-ambiguous without recording why, so state the
+            ;; reason before signalling or it is lost.
+            (format *error-output*
+                    "~&[knowledge graph] phase=~a charge-exceeded-reservation charged=~a reserved=~a~%"
+                    phase charge bound)
+            (finish-output *error-output*)
+            (error "Reviewed graph charge ~a exceeded its reservation ~a"
+                   charge bound))
           (let ((shasht:*read-default-true-value* :true)
                 (shasht:*read-default-false-value* :false)
                 (shasht:*read-default-null-value* :null))
