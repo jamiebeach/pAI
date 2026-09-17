@@ -85,6 +85,41 @@ accounting replaced missing or untrustworthy provider accounting.")
   "Dynamically true only while a private cognitive root crosses the provider boundary.")
 (defvar *conscious-conversation-private-provider-attempts* 0)
 (defvar *conscious-conversation-private-provider-spent-usd* 0d0)
+(defun %conversation-configured-private-provider-min-interval-seconds ()
+  (let ((raw (uiop:getenv "PAI_CONVERSATION_PRIVATE_PROVIDER_MIN_INTERVAL_SECONDS")))
+    (if (or (null raw) (zerop (length raw)))
+        0
+        (handler-case
+            (let ((value (parse-integer raw :junk-allowed nil)))
+              (unless (<= 0 value 60) (error "interval out of range"))
+              value)
+          (error ()
+            (error "Invalid PAI_CONVERSATION_PRIVATE_PROVIDER_MIN_INTERVAL_SECONDS"))))))
+(defparameter *conscious-conversation-private-provider-min-interval-seconds*
+  (%conversation-configured-private-provider-min-interval-seconds)
+  "Minimum interval between this process's own private/autonomous provider
+request starts (curiosity, private briefing, episode review) -- the same
+pacing the knowledge-graph path already has for its own requests, mirrored
+here for the recursive mind loop's much larger share of provider calls. Live
+chat is never paced by this: it is the one call site that should never wait
+on an artificial delay. 0 preserves the prior unthrottled default.")
+(defvar *conscious-conversation-last-private-provider-call-at* nil)
+(defun %conversation-await-private-provider-call-slot ()
+  "Pace this process's own private provider request starts. All of a
+recursive instance's autonomous work (curiosity in all its stages, private
+briefing, episode review) shares one provider/model with live chat; without
+pacing, that background volume alone can exceed the account's rate limit
+for that model and start failing live conversation turns too, not just
+background work -- observed directly, not a hypothetical."
+  (when (and (plusp *conscious-conversation-private-provider-min-interval-seconds*)
+             *conscious-conversation-last-private-provider-call-at*)
+    (loop for remaining =
+            (- (+ *conscious-conversation-last-private-provider-call-at*
+                  *conscious-conversation-private-provider-min-interval-seconds*)
+               (get-universal-time))
+          while (plusp remaining)
+          do (sleep (min 1 remaining))))
+  (setf *conscious-conversation-last-private-provider-call-at* (get-universal-time)))
 (defparameter *conscious-conversation-known-http-rejection-statuses*
   ;; These statuses establish that the request was rejected before a model
   ;; generation. Timeout/conflict and every 5xx remain outcome-uncertain.
@@ -2583,39 +2618,53 @@ smarter timeout recovery (e.g. retrying once with reasoning disabled) should
 still let this exhaust its ordinary retries first; the recovery remains
 available afterward if the failure persists. ON-ATTEMPT-FAILURE, when
 supplied, is called with (attempt failure-code reason http-status
-condition-type) for every failed attempt, including the last."
+condition-type elapsed-seconds) for every failed attempt, including the
+last. ELAPSED-SECONDS is how long that one attempt ran before failing --
+a slow failure (a real timeout, or a request that reached a provider and
+was rejected only after real processing) looks nothing like a fast one (an
+immediate gateway rejection, e.g. a bare rate limit), and distinguishing
+them by wall-clock time alone is often faster than reading error text."
   (let* ((remote (%conversation-openrouter-endpoint-p endpoint))
          (retry-limit
            (if remote (max 1 *conscious-conversation-provider-retry-limit*) 1))
          (backoff *conscious-conversation-provider-retry-backoff-seconds*))
     (loop for attempt from 1
-          do (handler-case
-                 (return
-                   (%conversation-http-model-call
-                    messages endpoint model temperature
-                    :transport-fn transport-fn :tools tools
-                    :tool-choice tool-choice))
-               (error (condition)
-                 (multiple-value-bind (failure-code reason http-status
-                                        condition-type)
-                     (%conversation-provider-failure-details condition)
-                   (when on-attempt-failure
-                     (funcall on-attempt-failure attempt failure-code reason
-                              http-status condition-type))
-                   (if (and (< attempt retry-limit)
-                            (funcall retryable-failure-fn failure-code
-                                     http-status)
-                            (%conversation-openrouter-budget-ready-p))
-                       (let ((wait (or (%conversation-provider-retry-after-seconds
-                                         condition)
-                                        backoff)))
-                         (format *error-output*
-                                 "~&[conversation] provider attempt ~a/~a failed (~a); retrying in ~as~%"
-                                 attempt retry-limit failure-code wait)
-                         (finish-output *error-output*)
-                         (sleep wait)
-                         (setf backoff (* 2 backoff)))
-                       (error condition)))))
+          do (when (and remote *conscious-conversation-private-provider-call-p*)
+               (%conversation-await-private-provider-call-slot))
+             (let ((attempt-started-at (get-internal-real-time)))
+               (handler-case
+                   (return
+                     (%conversation-http-model-call
+                      messages endpoint model temperature
+                      :transport-fn transport-fn :tools tools
+                      :tool-choice tool-choice))
+                 (error (condition)
+                   (let ((elapsed-seconds
+                           (/ (- (get-internal-real-time) attempt-started-at)
+                              (float internal-time-units-per-second 1d0))))
+                     (multiple-value-bind (failure-code reason http-status
+                                            condition-type)
+                         (%conversation-provider-failure-details condition)
+                       (when on-attempt-failure
+                         (funcall on-attempt-failure attempt failure-code
+                                  reason http-status condition-type
+                                  elapsed-seconds))
+                       (if (and (< attempt retry-limit)
+                                (funcall retryable-failure-fn failure-code
+                                         http-status)
+                                (%conversation-openrouter-budget-ready-p))
+                           (let ((wait (or (%conversation-provider-retry-after-seconds
+                                             condition)
+                                            backoff)))
+                             (format *error-output*
+                                     "~&[conversation] provider attempt ~a/~a failed after ~,1fs (~a: ~a); retrying in ~as~%"
+                                     attempt retry-limit elapsed-seconds
+                                     failure-code (or reason "no message")
+                                     wait)
+                             (finish-output *error-output*)
+                             (sleep wait)
+                             (setf backoff (* 2 backoff)))
+                           (error condition)))))))
           finally (error "Unreachable: provider retry loop exited without a result or a re-raised error"))))
 
 (defun %conversation-json-present-p (value)
@@ -3035,7 +3084,8 @@ condition-type) for every failed attempt, including the last."
                              :transport-fn *conscious-conversation-model-call-fn*
                              :on-attempt-failure
                              (lambda (attempt failure-code reason
-                                      http-status condition-type)
+                                      http-status condition-type
+                                      elapsed-seconds)
                                (declare (ignore reason))
                                (%conversation-append-readable
                                 "model-response"
@@ -3045,6 +3095,7 @@ condition-type) for every failed attempt, including the last."
                                      "http_status" http-status
                                      "condition_type" condition-type
                                      "attempt" attempt
+                                     "elapsed_seconds" elapsed-seconds
                                      "content_persisted" nil)
                                 :caused-by user-event-id))))))))
                   (error (condition)

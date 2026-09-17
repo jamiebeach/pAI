@@ -1040,13 +1040,20 @@ Caller holds lock."
                                                 *conscious-context-graph-request-ceiling-microusd*))))
         (%ccg-await-provider-call-slot)
         (let* ((before *conscious-conversation-provider-spent-usd*)
+               (call-started-at (get-internal-real-time))
                (response
                (handler-case
                    (%recursive-kg-model-call messages tools opened-id
                      (format nil "thread:reviewed-graph-v2:~d" opened-id) phase nil)
                  (error (condition)
-                   (let* ((http-p (typep condition 'dex:http-request-failed))
+                   (let* ((elapsed-seconds
+                            (/ (- (get-internal-real-time) call-started-at)
+                               (float internal-time-units-per-second 1d0)))
+                          (http-p (typep condition 'dex:http-request-failed))
                           (status (and http-p (dex:response-status condition)))
+                          (message
+                            (or (and http-p (%conversation-provider-http-message condition))
+                                (%conversation-condition-summary condition)))
                           (retryable
                             (or (null status) (member status '(408 409 425 429))
                                 (and (integerp status) (<= 500 status 599))))
@@ -1059,9 +1066,9 @@ Caller holds lock."
                                      (member status *conscious-conversation-known-http-rejection-statuses*))
                                 0 :null)))
                      (format *error-output*
-                             "~&[knowledge graph provider] phase=~a http-status=~a classification=~a retryable=~a~%"
-                             phase (or status "none") classification
-                             (not (null retryable)))
+                             "~&[knowledge graph provider] phase=~a elapsed=~,1fs http-status=~a classification=~a retryable=~a message=~a~%"
+                             phase elapsed-seconds (or status "none") classification
+                             (not (null retryable)) (or message "none"))
                      (finish-output *error-output*)
                      (error 'pai.context-graph::context-graph-call-failure
                             :classification classification :retryable-p (not (null retryable))

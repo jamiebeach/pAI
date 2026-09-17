@@ -1306,8 +1306,9 @@
                 (error "connection reset by peer")
                 forged-response))
           :on-attempt-failure
-          (lambda (attempt failure-code reason http-status condition-type)
-            (declare (ignore reason condition-type))
+          (lambda (attempt failure-code reason http-status condition-type
+                   elapsed-seconds)
+            (declare (ignore reason condition-type elapsed-seconds))
             (push (list attempt failure-code http-status) attempt-log)))))
   (q45-check "a call that fails twice then succeeds returns the live response"
              (eq result forged-response))
@@ -1451,6 +1452,99 @@
     (error (condition) (setf caught condition)))
   (q45-check "a loopback endpoint never retries; it is a test seam, not a network"
              (and caught (= 1 calls))))
+
+;;; --- pacing this process's own private/autonomous provider calls --------
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-private-provider-call-p* t)
+       (*conscious-conversation-private-provider-min-interval-seconds* 1)
+       (*conscious-conversation-last-private-provider-call-at* nil)
+       (forged-response
+         (obj "choices"
+              (vector
+               (obj "message" (obj "role" "assistant" "content" "ok")))
+              "usage" (obj "cost" 0.0001d0)))
+       (started (get-internal-real-time))
+       (first-result
+         (%conversation-http-model-call-with-retry
+          (list (obj "role" "user" "content" "first private call fixture"))
+          "https://openrouter.ai/api/v1/chat/completions"
+          "xiaomi/mimo-v2.5" 0.3d0
+          :transport-fn (lambda (&rest ignored)
+                          (declare (ignore ignored))
+                          forged-response)))
+       (first-elapsed
+         (/ (- (get-internal-real-time) started)
+            (float internal-time-units-per-second 1d0)))
+       (second-result
+         (%conversation-http-model-call-with-retry
+          (list (obj "role" "user" "content" "second private call fixture"))
+          "https://openrouter.ai/api/v1/chat/completions"
+          "xiaomi/mimo-v2.5" 0.3d0
+          :transport-fn (lambda (&rest ignored)
+                          (declare (ignore ignored))
+                          forged-response)))
+       (second-elapsed
+         (/ (- (get-internal-real-time) started)
+            (float internal-time-units-per-second 1d0))))
+  (q45-check "an unpaced first private call returns immediately"
+             (and (eq first-result forged-response) (< first-elapsed 3)))
+  (q45-check "a second private call within the interval waits for its slot"
+             (and (eq second-result forged-response) (>= second-elapsed 1))))
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-private-provider-call-p* nil)
+       (*conscious-conversation-private-provider-min-interval-seconds* 30)
+       (*conscious-conversation-last-private-provider-call-at* (get-universal-time))
+       (forged-response
+         (obj "choices"
+              (vector
+               (obj "message" (obj "role" "assistant" "content" "ok")))
+              "usage" (obj "cost" 0.0001d0)))
+       (started (get-internal-real-time))
+       (result
+         (%conversation-http-model-call-with-retry
+          (list (obj "role" "user" "content" "live chat fixture"))
+          "https://openrouter.ai/api/v1/chat/completions"
+          "xiaomi/mimo-v2.5" 0.3d0
+          :transport-fn (lambda (&rest ignored)
+                          (declare (ignore ignored))
+                          forged-response)))
+       (elapsed
+         (/ (- (get-internal-real-time) started)
+            (float internal-time-units-per-second 1d0))))
+  (q45-check "a non-private call is never paced, even mid-interval"
+             (and (eq result forged-response) (< elapsed 3))))
 
 ;;; --- honoring a provider-declared Retry-After ----------------------------
 

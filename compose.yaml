@@ -57,6 +57,13 @@ services:
       # the same model's OpenRouter rate limit. 0 (unset) preserves the
       # prior unthrottled default.
       PAI_CONTEXT_GRAPH_PROVIDER_MIN_INTERVAL_SECONDS: ${PAI_CONTEXT_GRAPH_PROVIDER_MIN_INTERVAL_SECONDS:-0}
+      # Same idea, for the recursive mind loop's own private/autonomous
+      # provider calls (curiosity, private briefing, episode review) rather
+      # than KG. A recursive instance's background cognition alone can
+      # exceed the account's rate limit for its model and start failing
+      # live conversation turns too -- observed directly. Live chat itself
+      # is never paced by this.
+      PAI_CONVERSATION_PRIVATE_PROVIDER_MIN_INTERVAL_SECONDS: ${PAI_CONVERSATION_PRIVATE_PROVIDER_MIN_INTERVAL_SECONDS:-0}
     ports:
       - "127.0.0.1:${PAI_WEB_PORT:-8080}:${PAI_WEB_PORT:-8080}"
     extra_hosts:
