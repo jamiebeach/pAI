@@ -227,6 +227,7 @@
    (:file "src/mind/conscious/lifecycle-semantics")
    (:file "src/mind/conscious/motivation")
    (:file "src/mind/conscious/motivation-runtime")
+   (:file "src/mind/conscious/operational-anomaly-detector")
    (:file "src/mind/conscious/affect-observation")
    (:file "src/mind/conscious/affect-disposition")
    (:file "src/mind/conscious/continuity-capsule")
