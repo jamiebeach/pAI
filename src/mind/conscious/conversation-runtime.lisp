@@ -2367,9 +2367,29 @@ retained verbatim so ordinary session accounting remains authoritative."
              (unless (hash-table-p chunk)
                (error "Streaming provider event is not an object"))
              (when (hash-table-p error-object)
-               (error "Streaming provider error: ~a"
-                      (or (gethash "message" error-object)
-                          "unspecified provider failure")))
+               ;; A mid-stream failure keeps HTTP 200 -- headers already
+               ;; went out before the upstream provider failed -- so this
+               ;; SSE-embedded object, not an HTTP status, is the only place
+               ;; OpenRouter's own error.code and error.metadata
+               ;; (error_type, and the upstream provider's own code) ever
+               ;; appear. Losing them here was losing the one detail that
+               ;; actually distinguishes "this provider hung" from "this
+               ;; provider refused" from "OpenRouter itself timed out."
+               (let* ((code (gethash "code" error-object))
+                      (metadata (gethash "metadata" error-object))
+                      (error-type (and (hash-table-p metadata)
+                                       (gethash "error_type" metadata)))
+                      (provider-code (and (hash-table-p metadata)
+                                          (gethash "provider_code" metadata))))
+                 (error "Streaming provider error: ~a~@[ (code ~a)~]~@[ [~a]~]~@[ provider_code=~a~]"
+                        (or (gethash "message" error-object)
+                            "unspecified provider failure")
+                        (and (realp code) code)
+                        (and (stringp error-type) (plusp (length error-type))
+                             error-type)
+                        (and (stringp provider-code)
+                             (plusp (length provider-code))
+                             provider-code))))
              (incf chunk-count)
              (incf payload-characters (length text))
              (dolist (key '("id" "object" "created" "model" "provider"

@@ -1546,6 +1546,34 @@
   (q45-check "a non-private call is never paced, even mid-interval"
              (and (eq result forged-response) (< elapsed 3))))
 
+;;; --- mid-stream provider errors keep HTTP 200; the SSE-embedded error
+;;; object is the only place OpenRouter's error.code and error.metadata
+;;; (error_type, and the upstream provider's own code) ever appear for
+;;; these -- see https://openrouter.ai/docs/api_reference/errors-and-debugging
+
+(let* ((body (format nil "data: {\"error\":{\"code\":502,\"message\":\"Upstream provider request timed out\",\"metadata\":{\"error_type\":\"provider_error\",\"provider_code\":\"UPSTREAM_TIMEOUT\"}}}~%~%data: [DONE]~%~%"))
+       (stream (make-string-input-stream body))
+       (caught nil))
+  (handler-case (%conversation-openrouter-stream-response stream)
+    (error (condition) (setf caught (%conversation-condition-summary condition))))
+  (q45-check "a mid-stream error's message is preserved"
+             (and caught (search "Upstream provider request timed out" caught)))
+  (q45-check "a mid-stream error's numeric code reaches the log-visible message"
+             (and caught (search "502" caught)))
+  (q45-check "a mid-stream error's error_type reaches the log-visible message"
+             (and caught (search "provider_error" caught)))
+  (q45-check "a mid-stream error's upstream provider_code reaches the log-visible message"
+             (and caught (search "UPSTREAM_TIMEOUT" caught))))
+
+(let* ((body (format nil "data: {\"error\":{\"message\":\"unspecified\"}}~%~%data: [DONE]~%~%"))
+       (stream (make-string-input-stream body))
+       (caught nil))
+  (handler-case (%conversation-openrouter-stream-response stream)
+    (error (condition) (setf caught (%conversation-condition-summary condition))))
+  (q45-check "an error missing code/metadata still reports cleanly, no stray nil text"
+             (and caught (search "unspecified" caught)
+                  (null (search "NIL" caught)))))
+
 ;;; --- honoring a provider-declared Retry-After ----------------------------
 
 (let ((headers (make-hash-table :test 'equal)))
