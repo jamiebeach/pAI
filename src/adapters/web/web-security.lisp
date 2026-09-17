@@ -26,7 +26,19 @@
 
 (defparameter *web-minimum-password-characters* 24)
 (defparameter *web-request-authenticated-p* nil)
-(defparameter *web-session-cookie-name* "__Host-pai_web_session")
+(defparameter *web-session-cookie-name*
+  ;; __Host- forbids a Domain attribute (by design: no subdomain scope
+  ;; widening), but browsers never scope cookies by port at all -- two
+  ;; instances served from the same hostname on different ports (e.g. two
+  ;; agents behind Tailscale Serve on one tailnet node) share ONE cookie
+  ;; jar entry for this name regardless. Confirmed live: logging into one
+  ;; agent logged the operator out of the other, because each login
+  ;; overwrote the single shared cookie value. Suffixing by PAI_WEB_PORT --
+  ;; already required, already unique per instance -- gives each instance
+  ;; its own cookie name instead, with no change to __Host-'s other
+  ;; guarantees (still HTTPS-only, still path "/", still no Domain).
+  (format nil "__Host-pai_web_session_~a"
+          (or (uiop:getenv "PAI_WEB_PORT") "default")))
 (defparameter *web-session-cookie-max-age-seconds* (* 30 24 60 60))
 
 (defparameter *web-file-mutation-authority*
