@@ -70,14 +70,35 @@ default when no override is present."
               value)
           (error () (error "Invalid PAI_CONTEXT_GRAPH_GENERATION_BUDGET_MICROUSD"))))))
 
+(defun %ccg-configured-request-ceiling-microusd ()
+  "Read the per-request guard, preserving the qualified default.
+
+Every other graph budget knob here is operator-configurable; this one was a
+bare literal, which made it a silent gate rather than a stated policy. A
+request priced above it is refused before the provider is called, so on an
+instance whose evidence payloads grow with its corpus the observable effect
+was an empty graph and a rescheduling retry loop, not a visible budget
+decision."
+  (let ((raw (uiop:getenv "PAI_CONTEXT_GRAPH_REQUEST_CEILING_MICROUSD")))
+    (if (or (null raw) (zerop (length raw))) 60000
+        (handler-case
+            (let ((value (parse-integer raw :junk-allowed nil)))
+              (unless (<= 1 value 1000000000) (error "ceiling out of range"))
+              value)
+          (error ()
+            (error "Invalid PAI_CONTEXT_GRAPH_REQUEST_CEILING_MICROUSD"))))))
+
 (defparameter *conscious-context-graph-generation-budget-microusd*
   (%ccg-configured-generation-budget-microusd)
   "Cumulative durable exposure ceiling approved for the dev rebuild.")
 (defparameter *conscious-context-graph-prior-exposure-microusd*
   (%ccg-configured-prior-exposure-microusd)
   "Charged or outcome-unknown exposure from predecessor graph generations.")
-(defparameter *conscious-context-graph-request-ceiling-microusd* 60000
-  "Absolute per-request guard; exact request reservations are normally smaller.")
+(defparameter *conscious-context-graph-request-ceiling-microusd*
+  (%ccg-configured-request-ceiling-microusd)
+  "Absolute per-request guard; exact request reservations are normally smaller.
+Override with PAI_CONTEXT_GRAPH_REQUEST_CEILING_MICROUSD on an instance whose
+evidence payloads have outgrown the default.")
 (defparameter *conscious-context-graph-budget-authorization-id*
   (let ((raw (uiop:getenv "PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID")))
     (cond ((or (null raw) (zerop (length raw))) nil)

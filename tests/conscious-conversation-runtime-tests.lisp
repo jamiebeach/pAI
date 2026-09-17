@@ -848,7 +848,49 @@
                              messages "qwen/remote-model" 0.3d0 endpoint))))
   (q45-check "OpenRouter request has a positive profile-priced admission bound"
              (plusp (%conversation-openrouter-request-cost-bound
-                     messages endpoint "xiaomi/mimo-v2.5" 0.3d0 tools))))
+                     messages endpoint "xiaomi/mimo-v2.5" 0.3d0 tools)))
+  ;; The reserve prices prompt tokens from payload bytes, and it is an
+  ;; admission gate rather than telemetry: counting one byte per token priced
+  ;; a request roughly three times above its true cost, which refused
+  ;; reviewed-graph identity formation on a large corpus before the model was
+  ;; ever called.
+  (q45-check "prompt reserve scales with the bytes-per-token divisor"
+             (let ((at-one
+                     (let ((*conversation-request-bytes-per-prompt-token* 1))
+                       (%conversation-openrouter-request-cost-bound
+                        messages endpoint "xiaomi/mimo-v2.5" 0.3d0 tools)))
+                   (at-three
+                     (let ((*conversation-request-bytes-per-prompt-token* 3))
+                       (%conversation-openrouter-request-cost-bound
+                        messages endpoint "xiaomi/mimo-v2.5" 0.3d0 tools))))
+               (and (plusp at-three) (< at-three at-one))))
+  (q45-check "bytes-per-prompt-token stays a positive over-pricing divisor"
+             (and (integerp *conversation-request-bytes-per-prompt-token*)
+                  (<= 1 *conversation-request-bytes-per-prompt-token* 4))))
+
+;; A reviewed-graph identity payload of the size a large corpus actually
+;; produces must price below the per-request ceiling, or entity extraction is
+;; gated off entirely and the graph silently stays empty while retryable
+;; refusals reschedule against the cognitive lock.
+(let* ((endpoint "https://openrouter.ai/api/v1/chat/completions")
+       (bulk (make-string 170000 :initial-element #\a))
+       (messages (list (obj "role" "system" "content" "graph phase")
+                       (obj "role" "user" "content" bulk)))
+       (tools (vector))
+       (*conscious-conversation-provider-profile*
+         (obj "model" "meta/muse-glimmer-30b"
+              "endpoint" endpoint
+              "provider_routing"
+              (obj "max_price_usd_per_million"
+                   (obj "prompt" 0.33d0 "completion" 1.21d0))))
+       ;; The densest reviewed-graph phase reserves this many output tokens.
+       (*conscious-conversation-max-output-tokens* 8192))
+  (let* ((bound (%conversation-openrouter-request-cost-bound
+                 messages endpoint "meta/muse-glimmer-30b" 0.3d0 tools))
+         (microusd (ceiling (* 1000000d0 bound))))
+    (q45-check "a 170KB reviewed-graph request prices under the 60000 ceiling"
+               (<= 1 microusd 60000))))
+
 
 (let ((*conscious-conversation-cost-ceiling-usd* 0.01d0)
       (*conscious-conversation-provider-attempts* 0)

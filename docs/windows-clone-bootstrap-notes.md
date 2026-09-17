@@ -246,3 +246,39 @@ accidental paid spend, no surprising state paths. So the fix is probably
 not to relax them in place but to admit a second, explicitly-opt-in
 deployment shape (paid provider plus out-of-repo state) that still requires
 an explicit cost ceiling, rather than widening the quick-start path.
+
+### 5. Reviewed-graph requests were priced, not sized
+
+Two bugs gated reviewed-graph identity formation on a large-corpus instance,
+both fixed, plus one constraint they were masking.
+
+The admission reserve in `%conversation-openrouter-request-cost-bound`
+priced prompt tokens at one byte per token. JSON-structured English
+tokenizes at roughly three to four bytes per token, so every request was
+priced three to four times above its true cost. That reserve is an
+admission gate, not telemetry: a payload over roughly 170KB priced above
+the per-request ceiling and was refused *before the provider was called*.
+The observable result was not an error an operator would notice -- it was an
+empty knowledge graph (entity extraction happens in the `mentions` phase,
+the most-attempted one) plus a rescheduling retry loop holding the
+cognitive lock. Fixed by estimating from
+`*conversation-request-bytes-per-prompt-token*`, which is deliberately 3
+so the reserve still over-prices rather than under-prices.
+
+The per-request ceiling itself was a bare `60000` literal while every
+neighbouring graph budget knob reads from the environment, which made it a
+silent gate rather than a stated policy. Fixed by adding
+`PAI_CONTEXT_GRAPH_REQUEST_CEILING_MICROUSD` following the existing
+`%ccg-configured-*` pattern.
+
+What those two fixes then exposed: with the gate open, the largest identity
+payloads reach the provider and some fail at the transport layer with no
+HTTP status, which classifies as `provider-outcome-ambiguous`, trips a
+deliberate generation-wide circuit (`paused-provider`), and after four
+attempts abandons the task as non-retryable. Raising a cost ceiling cannot
+fix that, because the limit being hit is time, not price.
+
+So evidence payload still needs bounding per phase, and it needs to be
+*chunking* rather than truncation: truncating evidence would silently drop
+the very mentions the phase exists to extract, which is the same class of
+invisible failure as the original bug. That remains unimplemented.

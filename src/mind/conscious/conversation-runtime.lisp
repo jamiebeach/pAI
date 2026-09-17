@@ -1785,6 +1785,22 @@ contract."
                   (%conversation-openrouter-provider-policy))))
         payload)))
 
+(defparameter *conversation-request-bytes-per-prompt-token* 3
+  "Conservative UTF-8 bytes per prompt token when pricing an unsent request.
+
+Counting one byte per token prices a payload three to four times above its
+true cost, because JSON-structured English tokenizes at roughly three to
+four bytes per token. That inflation is not harmless: this reserve is an
+admission gate, so on a large-corpus instance it refused reviewed-graph
+identity formation outright -- a payload priced above the per-request
+ceiling whose real cost was about a third of it, and the model was never
+called. Entity extraction then produced nothing while retryable refusals
+rescheduled in a loop, so the graph stayed empty and the cognitive lock
+stayed busy.
+
+Three sits deliberately below the observed three-to-four range, so the
+reserve still over-prices rather than under-prices a request.")
+
 (defun %conversation-openrouter-request-cost-bound
     (messages endpoint model temperature
      &optional (tools (vector)) tool-choice)
@@ -1806,9 +1822,10 @@ stop."
                    messages model temperature endpoint tools tool-choice))
          (bytes (length (babel:string-to-octets
                          (shasht:write-json payload nil) :encoding :utf-8)))
-         ;; One byte per prompt token plus provider-added headroom is a
-         ;; conservative admission bound for this structured request.
-         (input-upper (+ 1024 bytes)))
+         ;; Prompt tokens estimated from payload bytes, plus provider-added
+         ;; headroom. See *CONVERSATION-REQUEST-BYTES-PER-PROMPT-TOKEN*.
+         (input-upper (+ 1024 (ceiling bytes
+                                      *conversation-request-bytes-per-prompt-token*))))
     (unless (and (numberp prompt-price) (plusp prompt-price)
                  (numberp completion-price) (plusp completion-price))
       (error "OpenRouter profile has no positive maximum prices"))
