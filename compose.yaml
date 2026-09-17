@@ -64,6 +64,12 @@ services:
       # live conversation turns too -- observed directly. Live chat itself
       # is never paced by this.
       PAI_CONVERSATION_PRIVATE_PROVIDER_MIN_INTERVAL_SECONDS: ${PAI_CONVERSATION_PRIVATE_PROVIDER_MIN_INTERVAL_SECONDS:-0}
+      # Wall-clock deadline for one provider call (1-900s). A price-sorted
+      # or otherwise slow backend can genuinely take longer than the 120s
+      # default to produce a real response rather than fail fast -- raising
+      # this trades a longer visible wait for fewer requests cut off
+      # mid-flight and retried. 120 (unset) is the prior default.
+      PAI_CONVERSATION_PROVIDER_CALL_TIMEOUT_SECONDS: ${PAI_CONVERSATION_PROVIDER_CALL_TIMEOUT_SECONDS:-120}
     ports:
       - "127.0.0.1:${PAI_WEB_PORT:-8080}:${PAI_WEB_PORT:-8080}"
     extra_hosts:
