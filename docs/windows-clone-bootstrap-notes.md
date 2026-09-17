@@ -210,3 +210,39 @@ last, hours of processing and a meaningful amount of provider spend later,
 and may never be reached if a budget ceiling binds first. Consider sealing
 newest-first, or seeding a small recent window before starting the
 chronological backfill.
+
+### 4. Declarative config cannot express a persistent-runtime deployment
+
+`scripts/pai_instance.py` is the declarative launcher: it reads
+`config/instance.json`, maps it onto `pai_cli.parse_args([])`, and calls
+`pai_cli.run`. Its allow-list already covers most of what a real instance
+needs -- persona, provider profile, context profile, mind loop, recursive
+tools, the curiosity switches, episodic memory, knowledge-graph formation
+and budgets, trace levels, web settings -- and `agent.id` maps to
+`--agent-id`.
+
+It cannot currently express the persistent Docker deployment, for two
+independent reasons:
+
+- `provider.kind` must be `local`; any other value is refused outright, so
+  an OpenRouter-profile instance cannot be launched from config.
+- `storage.state_directory` must be a relative path *inside the
+  repository*, but the persistent profile deliberately keeps state in the
+  `pai-state` volume at `/var/lib/pai`, outside `/workspace`. Pointing the
+  config there fails with "state_directory escapes the repository."
+
+`cost_ceiling_usd` and the `openrouter_*` options are also absent from the
+schema.
+
+The practical consequence is that a persistent instance's real launch
+invocation is a ~30-flag `docker compose exec` command line that lives
+only in an operator's shell history. After an unclean Docker Desktop
+restart -- which leaves the container `Exited (255)` with no restart policy
+-- there is nothing declarative to restart it from. Committing that command
+to an instance-local script is a workaround, not a fix.
+
+Both restrictions look deliberate for a *public first-run on-ramp*: no
+accidental paid spend, no surprising state paths. So the fix is probably
+not to relax them in place but to admit a second, explicitly-opt-in
+deployment shape (paid provider plus out-of-repo state) that still requires
+an explicit cost ceiling, rather than widening the quick-start path.

@@ -167,6 +167,34 @@
    "encrypted reasoning detail is never treated as plaintext"
    (not (search "opaque" (%reasoning-isolation-details-text message)))))
 
+;; A streamed response delivers one detail per delta chunk, all sharing one
+;; type and index, each a continuation fragment carrying its own leading
+;; space. Joining those by line split words mid-token ("work do" + "cket")
+;; and corrupted every rendered reasoning string for streaming providers
+;; that publish no plaintext REASONING alias.
+(let* ((details (vector
+                 (obj "type" "reasoning.text" "index" 0 "text" "the work do")
+                 (obj "type" "reasoning.text" "index" 0 "text" "cket is")
+                 (obj "type" "reasoning.text" "index" 0 "text" " waiting")))
+       (message (ref (response :content nil :reasoning-details details)
+                     "choices" 0 "message")))
+  (reasoning-isolation-check
+   "streamed reasoning fragments of one block are concatenated, not lined"
+   (string= "the work docket is waiting"
+            (%reasoning-isolation-details-text message))))
+
+(let* ((details (vector
+                 (obj "type" "reasoning.text" "index" 0 "text" "first")
+                 (obj "type" "reasoning.text" "index" 0 "text" " block")
+                 (obj "type" "reasoning.text" "index" 1 "text" "second")
+                 (obj "type" "reasoning.text" "index" 1 "text" " block")))
+       (message (ref (response :content nil :reasoning-details details)
+                     "choices" 0 "message")))
+  (reasoning-isolation-check
+   "distinct reasoning blocks remain separated by one line"
+   (string= (format nil "first block~%second block")
+            (%reasoning-isolation-details-text message))))
+
 (reset-probe
  (response :content nil
            :reasoning-details (vector (obj "type" "reasoning.text"

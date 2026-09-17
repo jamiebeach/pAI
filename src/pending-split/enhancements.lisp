@@ -604,10 +604,17 @@ call. OpenAI-compatible tool-call messages commonly have NIL content."
 
 (defun %reasoning-isolation-details-text (message)
   "Return renderable plaintext from OpenRouter REASONING_DETAILS.
-Encrypted/signature-only blocks are deliberately ignored."
+Encrypted/signature-only blocks are deliberately ignored.
+
+A streamed response delivers one REASONING_DETAILS entry per delta chunk,
+all sharing one TYPE and INDEX, each holding a continuation fragment of the
+same reasoning block -- fragments carry their own leading spaces. Those must
+be concatenated: joining them by line split words mid-token (\"work do\" +
+\"cket\"). Only genuinely distinct blocks, which differ in TYPE or INDEX,
+are separated by a line."
   (let ((details (and (hash-table-p message)
                       (gethash "reasoning_details" message)))
-        (parts nil))
+        (groups nil))
     (when (or (vectorp details) (listp details))
       (map nil
            (lambda (detail)
@@ -615,10 +622,16 @@ Encrypted/signature-only blocks are deliberately ignored."
                (dolist (field '("text" "summary"))
                  (let ((value (gethash field detail)))
                    (when (and (stringp value) (plusp (length value)))
-                     (push value parts))))))
+                     (let* ((key (list (gethash "type" detail) field
+                                       (gethash "index" detail)))
+                            (group (assoc key groups :test #'equal)))
+                       (if group
+                           (setf (cdr group)
+                                 (concatenate 'string (cdr group) value))
+                           (push (cons key value) groups))))))))
            details))
-    (when parts
-      (format nil "~{~a~^~%~}" (nreverse parts)))))
+    (when groups
+      (format nil "~{~a~^~%~}" (mapcar #'cdr (nreverse groups))))))
 
 (defun %reasoning-isolation-reasoning-source (message)
   "Prefer the normalized legacy REASONING string, then structured details."
