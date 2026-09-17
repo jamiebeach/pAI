@@ -2151,10 +2151,18 @@ the complete failure receipt and may safely close this focus attempt."
                                      private-p)
                                      (*conscious-conversation-provider-profile*
                                        selected-provider-profile))
-                                 (%conversation-http-model-call
+                                 ;; A timeout here already gets a deliberate,
+                                 ;; smarter recovery below (retry once with
+                                 ;; reasoning disabled), so it is excluded from
+                                 ;; the generic backoff retry rather than
+                                 ;; delaying that recovery behind three more
+                                 ;; attempts of the same over-budget request.
+                                 (%conversation-http-model-call-with-retry
                                   messages *conscious-recursive-mind-endpoint*
                                   *conscious-recursive-mind-model* 0.3d0
-                                  :tools tools))))))))
+                                  :tools tools
+                                  :retryable-failure-fn
+                                  #'%conversation-provider-retryable-non-timeout-failure-p))))))))
                    (let ((provider-message
                            (%conversation-response-message response)))
                      (if (and (not reasoning-recovery-p)
@@ -3956,7 +3964,7 @@ require a mention and they do not infer operator intent from prompt text."
                               "conversation_episode" t)
                          (lambda ()
                            (let ((*conscious-conversation-private-provider-call-p* t))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.1d0
                               :tools tools :tool-choice "required"))))))
@@ -4302,7 +4310,7 @@ require a mention and they do not infer operator intent from prompt text."
                            (let ((*conscious-conversation-private-provider-call-p* t)
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-disabled-provider-profile)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.1d0
                               :tools tools :tool-choice tool-choice))))))
@@ -4400,7 +4408,7 @@ require a mention and they do not infer operator intent from prompt text."
                            (let ((*conscious-conversation-private-provider-call-p* t)
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-disabled-provider-profile)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.2d0
                               :tools tools :tool-choice tool-choice))))))
@@ -4819,7 +4827,7 @@ require a mention and they do not infer operator intent from prompt text."
                                        (%recursive-reasoning-disabled-provider-profile)
                                        (%recursive-reasoning-effort-provider-profile
                                         *conscious-recursive-mind-private-reasoning-effort*))))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.3d0
                               :tools tools))))))
@@ -5383,7 +5391,7 @@ require a mention and they do not infer operator intent from prompt text."
                            (let ((*conscious-conversation-private-provider-call-p* t)
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-disabled-provider-profile)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.1d0
                               :tools tools :tool-choice tool-choice))))))
@@ -5490,7 +5498,7 @@ require a mention and they do not infer operator intent from prompt text."
                            (let ((*conscious-conversation-private-provider-call-p* t)
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-disabled-provider-profile)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.2d0
                               :tools tools :tool-choice tool-choice))))))
@@ -5914,7 +5922,7 @@ require a mention and they do not infer operator intent from prompt text."
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-effort-provider-profile
                                     *conscious-recursive-mind-private-reasoning-effort*)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.3d0
                               :tools tools))))))
@@ -7515,7 +7523,7 @@ the focus so replay and later attention can continue."
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-effort-provider-profile
                                     *conscious-recursive-mind-private-reasoning-effort*)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.3d0
                               :tools tools :tool-choice "required"))))))
@@ -7905,7 +7913,7 @@ the focus so replay and later attention can continue."
                                  (*conscious-conversation-provider-profile*
                                    (%recursive-reasoning-effort-provider-profile
                                     *conscious-recursive-mind-private-reasoning-effort*)))
-                             (%conversation-http-model-call
+                             (%conversation-http-model-call-with-retry
                               messages *conscious-recursive-mind-endpoint*
                               *conscious-recursive-mind-model* 0.3d0
                               :tools tools :tool-choice "required"))))))

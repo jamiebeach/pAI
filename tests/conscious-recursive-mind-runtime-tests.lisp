@@ -885,6 +885,22 @@
       (when *crm-pend-after-provider-p*
         (setf *conscious-recursive-mind-operator-pending-p* t
               *crm-pend-after-provider-p* nil)))))
+;; Fixture stand-in for %CONVERSATION-HTTP-MODEL-CALL-WITH-RETRY: a single
+;; delegated attempt, no backoff. Generic backoff retry is exercised where
+;; the real function lives (conscious-conversation-runtime-tests.lisp); this
+;; isolated suite is about the recursive mind loop's own recovery semantics
+;; (reasoning-timeout recovery, reasoning-only-message recovery, and so on),
+;; which depend on seeing exactly one scripted response per call.
+(defun %conversation-http-model-call-with-retry
+    (messages endpoint model temperature
+     &key transport-fn tools tool-choice on-attempt-failure retryable-failure-fn)
+  (declare (ignore transport-fn on-attempt-failure retryable-failure-fn))
+  (%conversation-http-model-call messages endpoint model temperature
+                                  :tools tools :tool-choice tool-choice))
+(defun %conversation-provider-retryable-non-timeout-failure-p
+    (failure-code http-status)
+  (declare (ignore failure-code http-status))
+  nil)
 (defun %conversation-response-message (response)
   (gethash "message" (aref (gethash "choices" response) 0)))
 (defun %conversation-json-present-p (value)

@@ -2543,19 +2543,32 @@ large, unsupported media, unprocessable) will not succeed on retry."
       (and (integerp http-status)
            (or (= http-status 429) (>= http-status 500)))))
 
+(defun %conversation-provider-retryable-non-timeout-failure-p
+    (failure-code http-status)
+  "Like %CONVERSATION-PROVIDER-RETRYABLE-FAILURE-P but excludes a wall-clock
+timeout. Some call sites (the recursive live-turn boundary) already recover
+from a timeout by retrying once with reasoning disabled, which is a more
+useful response than blindly retrying the same over-budget request three
+more times before ever reaching that recovery."
+  (and (not (equal failure-code "provider-call-timeout"))
+       (%conversation-provider-retryable-failure-p failure-code http-status)))
+
 (defun %conversation-http-model-call-with-retry
     (messages endpoint model temperature
-     &key transport-fn (tools (vector)) tool-choice on-attempt-failure)
+     &key transport-fn (tools (vector)) tool-choice on-attempt-failure
+          (retryable-failure-fn #'%conversation-provider-retryable-failure-p))
   "Call %CONVERSATION-HTTP-MODEL-CALL, retrying a transient remote failure
 with exponential backoff before surfacing it. Every attempt after the first
 re-runs full admission (a fresh reservation, a fresh budget check), so a
 retry never doubly charges a prior attempt's settlement; it can only ever
 cost what an independent subsequent turn would have cost. Retrying stops as
-soon as the failure looks non-transient, retries are exhausted, or the
-budget is no longer ready (most often because the failed attempt itself put
-it in that state). ON-ATTEMPT-FAILURE, when supplied, is called with
-(attempt failure-code reason http-status condition-type) for every failed
-attempt, including the last."
+soon as RETRYABLE-FAILURE-FN says the failure is non-transient, retries are
+exhausted, or the budget is no longer ready (most often because the failed
+attempt itself put it in that state). Pass
+%CONVERSATION-PROVIDER-RETRYABLE-NON-TIMEOUT-FAILURE-P at a call site that
+already has its own timeout recovery. ON-ATTEMPT-FAILURE, when supplied, is
+called with (attempt failure-code reason http-status condition-type) for
+every failed attempt, including the last."
   (let* ((remote (%conversation-openrouter-endpoint-p endpoint))
          (retry-limit
            (if remote (max 1 *conscious-conversation-provider-retry-limit*) 1))
@@ -2575,8 +2588,8 @@ attempt, including the last."
                      (funcall on-attempt-failure attempt failure-code reason
                               http-status condition-type))
                    (if (and (< attempt retry-limit)
-                            (%conversation-provider-retryable-failure-p
-                             failure-code http-status)
+                            (funcall retryable-failure-fn failure-code
+                                     http-status)
                             (%conversation-openrouter-budget-ready-p))
                        (progn
                          (format *error-output*
