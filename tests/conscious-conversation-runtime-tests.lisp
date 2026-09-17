@@ -2172,7 +2172,10 @@
                                (gethash "failure_code" failure-payload ""))
                       (string= "simple-error"
                                (gethash "condition_type" failure-payload ""))
-                      (null (gethash "failure_message" failure-payload))))))
+                      (null (gethash "failure_message" failure-payload))))
+      (q45-check "the durable failure also carries the bounded provider reason"
+                 (search "fixture provider transport rejected"
+                         (gethash "reason" failure-payload "")))))
 
   (q45-reset)
   (let ((invalid-response

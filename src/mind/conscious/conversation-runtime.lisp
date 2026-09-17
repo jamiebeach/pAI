@@ -3086,12 +3086,19 @@ them by wall-clock time alone is often faster than reading error text."
                              (lambda (attempt failure-code reason
                                       http-status condition-type
                                       elapsed-seconds)
-                               (declare (ignore reason))
+                               ;; Every other provider-call site in this
+                               ;; substrate already journals its bounded
+                               ;; provider REASON text durably (see the nine
+                               ;; sites in recursive-mind-runtime.lisp); this
+                               ;; was the one place withholding it, which
+                               ;; left it invisible on the observability
+                               ;; dashboard even though it is stderr-visible.
                                (%conversation-append-readable
                                 "model-response"
                                 (obj "model_call_id" model-call-id
                                      "status" "failed"
                                      "failure_code" failure-code
+                                     "reason" (or reason :null)
                                      "http_status" http-status
                                      "condition_type" condition-type
                                      "attempt" attempt
