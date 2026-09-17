@@ -112,6 +112,58 @@ buckets, L2-normalized. Degraded, not broken."
       (when (plusp norm) (dotimes (i dim) (setf (aref v i) (/ (aref v i) norm)))))
     (coerce v 'list)))
 
+(defparameter *ollama-embed-attempts* 3
+  "Attempts per embedding call before accepting a degraded fallback.")
+(defparameter *ollama-embed-retry-backoff-seconds* 0.25d0
+  "First retry delay; each further retry doubles it.")
+(defparameter *embedding-degraded-threshold* 3
+  "Consecutive failed embedding calls before the circuit opens.")
+(defparameter *embedding-degraded-cooldown-seconds* 60
+  "How long the circuit stays open before another live attempt is tried.")
+
+(defvar *embedding-consecutive-failures* 0)
+(defvar *embedding-circuit-open-until* 0)
+(defvar *embedding-degraded-announced-p* nil)
+
+(defun %embedding-announce (state reason)
+  "Surface an embedding-service state change where an operator will see it.
+
+A silent fallback is the worst shape this failure can take: the fallback
+vector is a word-hash bucket approximation, stored looking structurally
+identical to a real embedding while being semantically unrelated to one.
+Retrieval quietly degrades, and any node written while the service is down
+keeps a vector that no later real query can match. That has to be visible
+when it starts, not inferred later from poor recall."
+  (format *error-output* "~&[embedding] ~a: ~a~%" state reason)
+  (finish-output *error-output*)
+  (when (fboundp 'web-terminal-present-operational-notice)
+    (ignore-errors
+      (funcall 'web-terminal-present-operational-notice
+               (format nil "Embedding service ~a: ~a" state reason)))))
+
+(defun %embedding-note-failure (reason)
+  (incf *embedding-consecutive-failures*)
+  (when (and (>= *embedding-consecutive-failures* *embedding-degraded-threshold*)
+             (not *embedding-degraded-announced-p*))
+    (setf *embedding-degraded-announced-p* t)
+    (%embedding-announce
+     "degraded"
+     (format nil "~d consecutive failures; storing and querying with degraded fallback vectors (~a)"
+             *embedding-consecutive-failures* reason)))
+  (when (>= *embedding-consecutive-failures* *embedding-degraded-threshold*)
+    (setf *embedding-circuit-open-until*
+          (+ (get-universal-time) *embedding-degraded-cooldown-seconds*))))
+
+(defun %embedding-note-success ()
+  (when *embedding-degraded-announced-p*
+    (%embedding-announce "recovered" "live embeddings restored"))
+  (setf *embedding-consecutive-failures* 0
+        *embedding-circuit-open-until* 0
+        *embedding-degraded-announced-p* nil))
+
+(defun %embedding-circuit-open-p ()
+  (< (get-universal-time) *embedding-circuit-open-until*))
+
 (defun %embedding-fallback (text reason)
   (if (eq *embedding-fallback-policy* :error)
       (error "Configured embedding model unavailable in strict mode: ~a" reason)
@@ -119,7 +171,8 @@ buckets, L2-normalized. Degraded, not broken."
         (format t "~&[memory-nodes] ~a, using fallback~%" reason)
         (%embed-word-overlap-fallback text))))
 
-(defun embed-text (text)
+(defun %embed-text-once (text)
+  "One live embedding attempt. Returns (values vector nil) or (values nil reason)."
   (handler-case
       (let* ((resp (shasht:read-json
                     (dex:post *ollama-endpoint*
@@ -128,10 +181,31 @@ buckets, L2-normalized. Degraded, not broken."
                               :content (shasht:write-json (obj "model" *ollama-embed-model* "prompt" text) nil))))
              (vec (gethash "embedding" resp)))
         (if (and (present-p vec) (plusp (length vec)))
-            (coerce vec 'list)
-            (%embedding-fallback text "Ollama returned no embedding")))
+            (values (coerce vec 'list) nil)
+            (values nil "Ollama returned no embedding")))
     (error (e)
-      (%embedding-fallback text (format nil "embedding call failed (~a)" e)))))
+      (values nil (format nil "embedding call failed (~a)" e)))))
+
+(defun embed-text (text)
+  "Embed TEXT, retrying with exponential backoff before accepting a degraded
+fallback. While the circuit is open the fallback is returned immediately:
+during a sustained outage every call otherwise pays its own connect and read
+timeout on top of every retry, which stalls context assembly badly."
+  (if (%embedding-circuit-open-p)
+      (%embedding-fallback text "embedding service circuit open")
+      (let ((reason nil)
+            (delay *ollama-embed-retry-backoff-seconds*))
+        (dotimes (attempt (max 1 *ollama-embed-attempts*))
+          (multiple-value-bind (vec why) (%embed-text-once text)
+            (when vec
+              (%embedding-note-success)
+              (return-from embed-text vec))
+            (setf reason why))
+          (when (< (1+ attempt) (max 1 *ollama-embed-attempts*))
+            (sleep delay)
+            (setf delay (* 2 delay))))
+        (%embedding-note-failure reason)
+        (%embedding-fallback text reason))))
 
 (defun embed-retrieval-query (text)
   "Nomic retrieval query task typing; never use for stored documents."
@@ -155,6 +229,50 @@ buckets, L2-normalized. Degraded, not broken."
                          0 (- (length *ollama-endpoint*) (length suffix)))
                  "/api/embed")))
 
+(defun %embed-batch-once (batch)
+  "One live batch-embedding attempt. Returns the list of vectors or signals."
+  (let* ((payload (obj "model" *ollama-embed-model*
+                       "input"
+                       (coerce
+                        (mapcar (lambda (text)
+                                  (format nil "search_document: ~a" (or text "")))
+                                batch)
+                        'vector)))
+         (response
+           (shasht:read-json
+            (dex:post (%ollama-batch-embedding-endpoint)
+                      :headers '(("Content-Type" . "application/json"))
+                      :connect-timeout *ollama-timeout*
+                      :read-timeout (* 4 *ollama-timeout*)
+                      :content (shasht:write-json payload nil))))
+         (embeddings (gethash "embeddings" response)))
+    (unless (and (vectorp embeddings)
+                 (= (length batch) (length embeddings))
+                 (every (lambda (embedding)
+                          (and (vectorp embedding) (plusp (length embedding))))
+                        (coerce embeddings 'list)))
+      (error "Ollama returned an invalid embedding batch"))
+    (map 'list (lambda (embedding) (coerce embedding 'list)) embeddings)))
+
+(defun %embed-batch-with-retry (batch)
+  "Retry one batch with backoff, honoring the same circuit as EMBED-TEXT."
+  (when (%embedding-circuit-open-p)
+    (error "embedding service circuit open"))
+  (let ((delay *ollama-embed-retry-backoff-seconds*)
+        (last-condition nil))
+    (dotimes (attempt (max 1 *ollama-embed-attempts*))
+      (handler-case
+          (let ((result (%embed-batch-once batch)))
+            (%embedding-note-success)
+            (return-from %embed-batch-with-retry result))
+        (error (c)
+          (setf last-condition c)
+          (when (< (1+ attempt) (max 1 *ollama-embed-attempts*))
+            (sleep delay)
+            (setf delay (* 2 delay))))))
+    (%embedding-note-failure (format nil "~a" last-condition))
+    (error last-condition)))
+
 (defun embed-retrieval-documents (texts)
   "Embed ordered retrieval documents through bounded local Ollama batches.
 
@@ -176,32 +294,7 @@ instead of multiplying a failed endpoint into one request per document."
               for end = (min (length items)
                              (+ start *ollama-embedding-batch-size*))
               for batch = (subseq items start end)
-              for payload = (obj "model" *ollama-embed-model*
-                                 "input"
-                                 (coerce
-                                  (mapcar (lambda (text)
-                                            (format nil "search_document: ~a"
-                                                    (or text "")))
-                                          batch)
-                                  'vector))
-              for response =
-                (shasht:read-json
-                 (dex:post (%ollama-batch-embedding-endpoint)
-                           :headers '(("Content-Type" . "application/json"))
-                           :connect-timeout *ollama-timeout*
-                           :read-timeout (* 4 *ollama-timeout*)
-                           :content (shasht:write-json payload nil)))
-              for embeddings = (gethash "embeddings" response)
-              unless (and (vectorp embeddings)
-                          (= (length batch) (length embeddings))
-                          (every (lambda (embedding)
-                                   (and (vectorp embedding)
-                                        (plusp (length embedding))))
-                                 (coerce embeddings 'list)))
-                do (error "Ollama returned an invalid embedding batch")
-              append (map 'list (lambda (embedding)
-                                  (coerce embedding 'list))
-                          embeddings))
+              append (%embed-batch-with-retry batch))
       (error (condition)
         (if (eq *embedding-fallback-policy* :error)
             (error "Configured embedding model unavailable in strict batch mode: ~a"

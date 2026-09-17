@@ -60,6 +60,124 @@
  (let ((*embedding-fallback-policy* :allow))
    (= 768 (length (%embedding-fallback "query" "fixture outage")))))
 
+;;; --- embedding retry, backoff, and circuit breaker ----------------------
+
+(defmacro with-fixture-embed-once ((responses-var) &body body)
+  "Replace %EMBED-TEXT-ONCE with a fixture returning the successive results
+in RESPONSES-VAR (each either a vector, for success, or a reason string, for
+failure), then restore the real definition."
+  (let ((orig (gensym)) (queue (gensym)))
+    `(let* ((,orig (fdefinition '%embed-text-once))
+            (,queue ,responses-var))
+       (unwind-protect
+            (progn
+              (setf (fdefinition '%embed-text-once)
+                    (lambda (text)
+                      (declare (ignore text))
+                      (let ((next (pop ,queue)))
+                        (if (and (vectorp next) (not (stringp next)))
+                            (values (coerce next 'list) nil)
+                            (values nil (or next "fixture failure"))))))
+              ,@body)
+         (setf (fdefinition '%embed-text-once) ,orig)))))
+
+(defmacro with-reset-embedding-circuit (&body body)
+  `(let ((*embedding-consecutive-failures* 0)
+         (*embedding-circuit-open-until* 0)
+         (*embedding-degraded-announced-p* nil)
+         (*embedding-fallback-policy* :allow)
+         (*ollama-embed-attempts* 3)
+         (*ollama-embed-retry-backoff-seconds* 0.0d0))
+     ,@body))
+
+(with-reset-embedding-circuit
+  (with-fixture-embed-once ((list "first attempt down" #(0.5d0 0.25d0)))
+    (pai-lab-test-check
+     "embed-text retries once and returns the live vector on the second try"
+     (equal '(0.5d0 0.25d0) (embed-text "hello")))
+    (pai-lab-test-check
+     "a recovered call clears the consecutive-failure count"
+     (zerop *embedding-consecutive-failures*))))
+
+(with-reset-embedding-circuit
+  (with-fixture-embed-once ((list "down" "down" "down"))
+    (let ((result (embed-text "hello")))
+      (pai-lab-test-check
+       "exhausting every attempt still returns a usable fallback vector"
+       (and (listp result) (= 768 (length result))))))
+  (pai-lab-test-check
+   "exhausting every attempt records one failure toward the circuit"
+   (= 1 *embedding-consecutive-failures*)))
+
+(with-reset-embedding-circuit
+  (let ((announcements nil))
+    (let ((orig (fdefinition '%embedding-announce)))
+      (unwind-protect
+           (progn
+             (setf (fdefinition '%embedding-announce)
+                   (lambda (state reason) (push (cons state reason) announcements)))
+             (with-fixture-embed-once ((list "down" "down" "down"))
+               (embed-text "one"))
+             (with-fixture-embed-once ((list "down" "down" "down"))
+               (embed-text "two"))
+             (with-fixture-embed-once ((list "down" "down" "down"))
+               (embed-text "three")))
+        (setf (fdefinition '%embedding-announce) orig)))
+    (pai-lab-test-check
+     "three consecutive fully-failed calls announce degraded exactly once"
+     (= 1 (count "degraded" announcements :key #'car :test #'string=)))
+    (pai-lab-test-check
+     "the third failure opens the circuit for the cooldown window"
+     (> *embedding-circuit-open-until* (get-universal-time)))))
+
+(with-reset-embedding-circuit
+  (setf *embedding-circuit-open-until* (+ (get-universal-time) 60))
+  (with-fixture-embed-once ((list #(1.0d0)))
+    (pai-lab-test-check
+     "an open circuit short-circuits to the fallback without a live attempt"
+     (let ((result (embed-text "hello")))
+       (and (listp result) (= 768 (length result))
+            (not (equal result '(1.0d0))))))))
+
+(with-reset-embedding-circuit
+  (let ((announcements nil))
+    (setf *embedding-consecutive-failures* *embedding-degraded-threshold*
+          *embedding-degraded-announced-p* t)
+    (let ((orig (fdefinition '%embedding-announce)))
+      (unwind-protect
+           (progn
+             (setf (fdefinition '%embedding-announce)
+                   (lambda (state reason) (push (cons state reason) announcements)))
+             (with-fixture-embed-once ((list #(1.0d0)))
+               (embed-text "recovered")))
+        (setf (fdefinition '%embedding-announce) orig)))
+    (pai-lab-test-check
+     "a live success after a degraded run announces recovery"
+     (find "recovered" announcements :key #'car :test #'string=))
+    (pai-lab-test-check
+     "recovery clears the degraded-announced latch"
+     (not *embedding-degraded-announced-p*))))
+
+(with-reset-embedding-circuit
+  (let ((batches nil))
+    (let ((orig (fdefinition '%embed-batch-once)))
+      (unwind-protect
+           (progn
+             (setf (fdefinition '%embed-batch-once)
+                   (lambda (batch)
+                     (push batch batches)
+                     (if (<= (length batches) 1)
+                         (error "batch endpoint unavailable")
+                         (mapcar (lambda (text)
+                                   (declare (ignore text))
+                                   (list 0.1d0 0.2d0))
+                                 batch))))
+             (pai-lab-test-check
+              "batch retrieval retries a failed batch before falling back"
+              (equal (list (list 0.1d0 0.2d0) (list 0.1d0 0.2d0))
+                     (embed-retrieval-documents (list "a" "b")))))
+        (setf (fdefinition '%embed-batch-once) orig)))))
+
 (let* ((query "What shared routine was discussed?")
        (rows
          (list

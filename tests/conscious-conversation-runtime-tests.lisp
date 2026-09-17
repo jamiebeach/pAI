@@ -1244,6 +1244,214 @@
                               "status"
                               *conscious-conversation-last-accounting-anomaly*))))))
 
+;;; --- provider retry with backoff -----------------------------------------
+
+(q45-check "a timeout has no HTTP status and is retryable"
+           (%conversation-provider-retryable-failure-p
+            "provider-call-timeout" :null))
+(q45-check "a generic transport failure has no HTTP status and is retryable"
+           (%conversation-provider-retryable-failure-p
+            "provider-transport-failed" :null))
+(q45-check "a 429 rate limit is retryable"
+           (%conversation-provider-retryable-failure-p "provider-http-429" 429))
+(q45-check "a 500 is retryable"
+           (%conversation-provider-retryable-failure-p "provider-http-500" 500))
+(q45-check "a 503 is retryable"
+           (%conversation-provider-retryable-failure-p "provider-http-503" 503))
+(q45-check "a 400 bad request is not retryable"
+           (not (%conversation-provider-retryable-failure-p
+                 "provider-http-400" 400)))
+(q45-check "a 404 not-found is not retryable"
+           (not (%conversation-provider-retryable-failure-p
+                 "provider-http-404" 404)))
+(q45-check "a 401 unauthorized is not retryable"
+           (not (%conversation-provider-retryable-failure-p
+                 "provider-http-401" 401)))
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-provider-retry-limit* 3)
+       (*conscious-conversation-provider-retry-backoff-seconds* 0d0)
+       (calls 0)
+       (attempt-log nil)
+       (forged-response
+         (obj "choices"
+              (vector
+               (obj "message" (obj "role" "assistant" "content" "ok")))
+              "usage" (obj "cost" 0.0001d0)))
+       (result
+         (%conversation-http-model-call-with-retry
+          (list (obj "role" "user" "content" "retry-then-succeed fixture"))
+          "https://openrouter.ai/api/v1/chat/completions"
+          "xiaomi/mimo-v2.5" 0.3d0
+          :transport-fn
+          (lambda (&rest ignored)
+            (declare (ignore ignored))
+            (incf calls)
+            (if (< calls 3)
+                (error "connection reset by peer")
+                forged-response))
+          :on-attempt-failure
+          (lambda (attempt failure-code reason http-status condition-type)
+            (declare (ignore reason condition-type))
+            (push (list attempt failure-code http-status) attempt-log)))))
+  (q45-check "a call that fails twice then succeeds returns the live response"
+             (eq result forged-response))
+  (q45-check "each failed attempt before success is reported once, in order"
+             (equal (reverse attempt-log)
+                    '((1 "provider-transport-failed" :null)
+                      (2 "provider-transport-failed" :null))))
+  (q45-check "three transport attempts were actually made"
+             (= 3 calls)))
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-provider-retry-limit* 3)
+       (*conscious-conversation-provider-retry-backoff-seconds* 0d0)
+       (calls 0)
+       (caught nil))
+  (handler-case
+      (%conversation-http-model-call-with-retry
+       (list (obj "role" "user" "content" "exhausted retries fixture"))
+       "https://openrouter.ai/api/v1/chat/completions"
+       "xiaomi/mimo-v2.5" 0.3d0
+       :transport-fn
+       (lambda (&rest ignored)
+         (declare (ignore ignored))
+         (incf calls)
+         (error "connection reset by peer")))
+    (error (condition) (setf caught condition)))
+  (q45-check "exhausting every retry still surfaces the failure"
+             (and caught (= 3 calls))))
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-provider-retry-limit* 5)
+       (*conscious-conversation-provider-retry-backoff-seconds* 0d0)
+       (calls 0)
+       (rejection
+         (make-condition
+          'dex:http-request-not-found
+          :body "{\"error\":{\"message\":\"model not found\"}}"
+          :status 404 :headers nil
+          :uri (quri:uri "https://openrouter.ai/api/v1/chat/completions")
+          :method :post))
+       (caught nil))
+  (handler-case
+      (%conversation-http-model-call-with-retry
+       (list (obj "role" "user" "content" "non-retryable rejection fixture"))
+       "https://openrouter.ai/api/v1/chat/completions"
+       "xiaomi/mimo-v2.5" 0.3d0
+       :transport-fn
+       (lambda (&rest ignored)
+         (declare (ignore ignored))
+         (incf calls)
+         (error rejection)))
+    (error (condition) (setf caught condition)))
+  (q45-check "a definitive 404 rejection is not retried"
+             (and caught (= 1 calls))))
+
+(let* ((*conscious-conversation-provider-profile*
+         (obj "provider" "openrouter"
+              "model" "xiaomi/mimo-v2.5"
+              "endpoint" "https://openrouter.ai/api/v1/chat/completions"
+              "context_capacity_tokens" 1000000
+              "reasoning" (obj "enabled" nil)
+              "supports_parallel_tool_calls_parameter" nil
+              "provider_routing"
+              (obj "sort" "price" "require_parameters" t
+                   "data_collection" "deny" "zdr" t
+                   "max_price_usd_per_million"
+                   (obj "prompt" 0.20d0 "completion" 0.40d0))))
+       (*conscious-conversation-cost-ceiling-usd* 1d0)
+       (*conscious-conversation-provider-attempts* 0)
+       (*conscious-conversation-provider-spent-usd* 0d0)
+       (*conscious-conversation-provider-budget-uncertain-p* nil)
+       (*conscious-conversation-provider-retry-limit* 5)
+       (*conscious-conversation-provider-retry-backoff-seconds* 0d0)
+       (calls 0)
+       (caught nil))
+  ;; A prior failed attempt can leave the session budget uncertain (an
+  ;; unsettled generation with no chargeable bound -- see the "unsettled
+  ;; generation" fixture above). Retrying into that state would either bill
+  ;; past the session ceiling or hit the same admission refusal the fresh
+  ;; attempt would raise anyway, just less legibly, so the loop must stop.
+  (handler-case
+      (%conversation-http-model-call-with-retry
+       (list (obj "role" "user" "content" "budget uncertain fixture"))
+       "https://openrouter.ai/api/v1/chat/completions"
+       "xiaomi/mimo-v2.5" 0.3d0
+       :transport-fn
+       (lambda (&rest ignored)
+         (declare (ignore ignored))
+         (incf calls)
+         (setf *conscious-conversation-provider-budget-uncertain-p* t)
+         (error "connection reset by peer")))
+    (error (condition) (setf caught condition)))
+  (q45-check "a failure that leaves the budget uncertain is not retried"
+             (and caught (= 1 calls)
+                  *conscious-conversation-provider-budget-uncertain-p*)))
+
+(let* ((endpoint "http://localhost:1234/v1/chat/completions")
+       (*conscious-conversation-provider-retry-limit* 5)
+       (*conscious-conversation-provider-retry-backoff-seconds* 0d0)
+       (calls 0)
+       (caught nil))
+  (handler-case
+      (%conversation-http-model-call-with-retry
+       (list (obj "role" "user" "content" "loopback fixture"))
+       endpoint "fixture-model" 0.3d0
+       :transport-fn
+       (lambda (&rest ignored)
+         (declare (ignore ignored))
+         (incf calls)
+         (error "fixture transport failure")))
+    (error (condition) (setf caught condition)))
+  (q45-check "a loopback endpoint never retries; it is a test seam, not a network"
+             (and caught (= 1 calls))))
+
 ;; Charging a whole context capacity as completion for one unobserved outcome
 ;; is pessimistic past usefulness: at a million-token capacity it bills about
 ;; half a dollar per ambiguous call, three of which exhausted a live

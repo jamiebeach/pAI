@@ -89,6 +89,12 @@ accounting replaced missing or untrustworthy provider accounting.")
   ;; These statuses establish that the request was rejected before a model
   ;; generation. Timeout/conflict and every 5xx remain outcome-uncertain.
   '(400 401 402 403 404 405 406 413 415 422 429))
+(defparameter *conscious-conversation-provider-retry-limit* 3
+  "Total remote provider attempts per turn (the first plus retries) before a
+transient failure is surfaced as a lost turn. Only the remote OpenRouter path
+retries: a local/loopback transport-fn is a test seam, not a flaky network.")
+(defparameter *conscious-conversation-provider-retry-backoff-seconds* 1.0d0
+  "First retry delay; each further retry doubles it.")
 (defparameter *conscious-conversation-persona-fragment-limit* 16000)
 (defparameter *conscious-conversation-memory-discovery-maximum* 10)
 (defvar *conscious-conversation-persona-profile* nil)
@@ -2527,6 +2533,61 @@ retained verbatim so ordinary session accounting remains authoritative."
            (uiop:getenv "OPENROUTER_API_KEY")))
         (error condition)))))
 
+(defun %conversation-provider-retryable-failure-p (failure-code http-status)
+  "True for failures worth retrying: a wall-clock timeout, a dropped or
+aborted connection/stream (no HTTP status at all), a rate limit, or a 5xx.
+A recognized 4xx client rejection (bad request, auth, not-found, payload-too-
+large, unsupported media, unprocessable) will not succeed on retry."
+  (declare (ignore failure-code))
+  (or (eq http-status :null)
+      (and (integerp http-status)
+           (or (= http-status 429) (>= http-status 500)))))
+
+(defun %conversation-http-model-call-with-retry
+    (messages endpoint model temperature
+     &key transport-fn (tools (vector)) tool-choice on-attempt-failure)
+  "Call %CONVERSATION-HTTP-MODEL-CALL, retrying a transient remote failure
+with exponential backoff before surfacing it. Every attempt after the first
+re-runs full admission (a fresh reservation, a fresh budget check), so a
+retry never doubly charges a prior attempt's settlement; it can only ever
+cost what an independent subsequent turn would have cost. Retrying stops as
+soon as the failure looks non-transient, retries are exhausted, or the
+budget is no longer ready (most often because the failed attempt itself put
+it in that state). ON-ATTEMPT-FAILURE, when supplied, is called with
+(attempt failure-code reason http-status condition-type) for every failed
+attempt, including the last."
+  (let* ((remote (%conversation-openrouter-endpoint-p endpoint))
+         (retry-limit
+           (if remote (max 1 *conscious-conversation-provider-retry-limit*) 1))
+         (backoff *conscious-conversation-provider-retry-backoff-seconds*))
+    (loop for attempt from 1
+          do (handler-case
+                 (return
+                   (%conversation-http-model-call
+                    messages endpoint model temperature
+                    :transport-fn transport-fn :tools tools
+                    :tool-choice tool-choice))
+               (error (condition)
+                 (multiple-value-bind (failure-code reason http-status
+                                        condition-type)
+                     (%conversation-provider-failure-details condition)
+                   (when on-attempt-failure
+                     (funcall on-attempt-failure attempt failure-code reason
+                              http-status condition-type))
+                   (if (and (< attempt retry-limit)
+                            (%conversation-provider-retryable-failure-p
+                             failure-code http-status)
+                            (%conversation-openrouter-budget-ready-p))
+                       (progn
+                         (format *error-output*
+                                 "~&[conversation] provider attempt ~a/~a failed (~a); retrying in ~as~%"
+                                 attempt retry-limit failure-code backoff)
+                         (finish-output *error-output*)
+                         (sleep backoff)
+                         (setf backoff (* 2 backoff)))
+                       (error condition)))))
+          finally (error "Unreachable: provider retry loop exited without a result or a re-raised error"))))
+
 (defun %conversation-json-present-p (value)
   (and value (not (eq value :null))))
 
@@ -2932,29 +2993,35 @@ retained verbatim so ordinary session accounting remains authoritative."
                 (handler-case
                     (progn
                       (incf *conscious-conversation-provider-calls*)
-                       (%conversation-time-phase
-                        "provider"
-                        (lambda ()
-                          (%conversation-call-model-with-trace
-                           messages trace-metadata
-                           (lambda ()
-                             (%conversation-http-model-call
-                              messages endpoint model temperature
-                              :tools tools
-                              :transport-fn
-                              *conscious-conversation-model-call-fn*))))))
+                      (%conversation-time-phase
+                       "provider"
+                       (lambda ()
+                         (%conversation-call-model-with-trace
+                          messages trace-metadata
+                          (lambda ()
+                            (%conversation-http-model-call-with-retry
+                             messages endpoint model temperature
+                             :tools tools
+                             :transport-fn *conscious-conversation-model-call-fn*
+                             :on-attempt-failure
+                             (lambda (attempt failure-code reason
+                                      http-status condition-type)
+                               (declare (ignore reason))
+                               (%conversation-append-readable
+                                "model-response"
+                                (obj "model_call_id" model-call-id
+                                     "status" "failed"
+                                     "failure_code" failure-code
+                                     "http_status" http-status
+                                     "condition_type" condition-type
+                                     "attempt" attempt
+                                     "content_persisted" nil)
+                                :caused-by user-event-id))))))))
                   (error (condition)
                     (multiple-value-bind
                           (failure-code reason http-status condition-type)
                         (%conversation-provider-failure-details condition)
-                      (%conversation-append-readable
-                       "model-response"
-                       (obj "model_call_id" model-call-id "status" "failed"
-                            "failure_code" failure-code
-                            "http_status" http-status
-                            "condition_type" condition-type
-                            "content_persisted" nil)
-                       :caused-by user-event-id)
+                      (declare (ignore http-status condition-type))
                       (conscious-pulse-runtime-fail-captured
                        "provider-call-failed")
                       (setf *conscious-conversation-last-status*

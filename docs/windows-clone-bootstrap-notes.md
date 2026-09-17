@@ -111,6 +111,90 @@ instance keeps running under the same partition it always has). Whichever
 value ends up in the event/memory database is the one every later
 `pai_cli.py` invocation for that instance must keep using.
 
+## 6. An embedding-server outage degrades memory silently, with no retry
+
+The substrate has an undocumented hard dependency on a dedicated local
+Ollama container (`pai-ollama`, `nomic-embed-text`, 768 dimensions) reachable
+at `PAI_OLLAMA_ENDPOINT`. It is a separate container from the runtime, on the
+same Docker network, and nothing declares that dependency anywhere an
+operator would see it before it matters -- not `compose.yaml`'s service
+descriptions, not the bootstrap docs, nothing at startup.
+
+When it is unreachable -- observed cause: it was stopped as a side effect of
+shutting down an unrelated container that happened to share the same Docker
+network, silently breaking embeddings for every other agent still on that
+network too -- `embed-text` in `src/mind/memory/memory-nodes.lisp` caught the
+failure and fell back to `%embed-word-overlap-fallback`, a cheap word-hash
+pseudo-embedding. The fallback is real and intentional (`*embedding-fallback-
+policy*` `:allow` for production, `:error` only for qualification runs that
+must prove they used the real model), but it wrote only a bare `[memory-
+nodes] ... using fallback` line to the process log, easy to miss in a running
+container, and nothing on screen. A ~15-hour outage passed unnoticed; by the
+time it was found, semantic memory writes made during the outage carried
+vectors 86-91% zero bytes (a healthy write is under 1% zero), and -- because
+knowledge-graph formation retrieves through the same embedding path -- every
+piece of graph work done in that window (247 episodes, 27 identity
+completions, 59 opened tasks, all of it) was built on blind retrieval with no
+way to tell, after the fact, which conclusions it actually supported.
+
+Fixed on the embedding path specifically (`src/mind/memory/memory-nodes.lisp`):
+`embed-text` and the batch retrieval path now retry up to
+`*ollama-embed-attempts*` (3) with doubling backoff before falling back, and
+a circuit breaker opens after `*embedding-degraded-threshold*` (3) consecutive
+failures so a sustained outage returns the fallback immediately instead of
+paying a full connect-and-read timeout on every single call -- during the
+observed outage that had been adding real per-turn latency on top of the
+degraded retrieval. State transitions (degraded, recovered) are announced
+once each, not per call, to `*error-output*` and, when a web terminal is
+serving, through `web-terminal-present-operational-notice` -- the same
+on-screen anomaly path `scripts/conscious-conversation.lisp` already used for
+provider anomalies, now reused rather than duplicated. This does not recover
+the vectors already written degraded; it only makes the next outage visible
+while it is happening instead of after. Regenerating the identity
+completions built during a known outage window, or restarting the affected
+generation's knowledge graph, remains a manual operator decision -- there is
+no built-in regeneration affordance (a generation's dispatch is keyed off
+`PAI_CONTEXT_GRAPH_RUNTIME_PROFILE`, and the owner replays whatever prior
+completions already exist for it, so there is no "redo since this checkpoint"
+button today).
+
+## 7. A lost provider connection lost the entire conversation turn
+
+`%conscious-conversation-turn` made exactly one provider attempt per turn.
+A dropped connection or aborted stream (`Streaming provider error: The
+operation was aborted`, no HTTP status -- classified `provider-transport-
+failed`) surfaced immediately as `provider-call-failed`: the turn ended, the
+user's message got no reply, and the only recourse was asking again by hand.
+Config already declared `"retry_limit": 0` under `budget_contract` in
+`config/conscious-provider-profiles.json`, which reads as exactly this
+behavior, but that field is actually consumed only by the unrelated sealed
+context-lab experiment tool (`scripts/openrouter-context-lab.lisp`), which
+deliberately requires zero retries to keep its request count provable. The
+live conversation path had no retry knob of its own at all -- it was simply
+not implemented, not configured to zero.
+
+Fixed with `%conversation-http-model-call-with-retry` in
+`src/mind/conscious/conversation-runtime.lisp`, called from
+`%conscious-conversation-turn` in place of a bare `%conversation-http-model-
+call`. It retries a transient failure (a timeout, a 429, a 5xx, or any
+transport failure with no HTTP status at all) up to
+`*conscious-conversation-provider-retry-limit*` (3) times with doubling
+backoff from `*conscious-conversation-provider-retry-backoff-seconds*`
+(1 second), and only for the remote OpenRouter path -- a loopback/test
+transport never retries, since a local fixture failing is a test asserting
+something, not a network being flaky. A recognized 4xx rejection (bad
+request, auth, not-found, and similar -- see `*conscious-conversation-known-
+http-rejection-statuses*`) is never retried, since it will not succeed on
+retry. Each retry is a genuinely independent attempt -- its own admission
+check, its own reservation, its own charge if it fails again -- so retrying
+never double-charges a prior attempt's settlement; the loop also stops early
+if a failed attempt leaves the session budget no longer ready (uncertain, or
+past its ceiling), since retrying into that state would either overspend or
+just hit the same admission refusal a moment later with less clarity. Every
+failed attempt, including the last, is still journaled as its own
+`model-response` event with an `attempt` number, so the event log stays a
+complete record of what actually happened rather than only the outcome.
+
 ## What a migration into a fresh instance needs to get right, in order
 
 1. `.env` exists (copied from `.env.example`) before the first `docker
