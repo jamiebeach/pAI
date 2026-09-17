@@ -50,6 +50,13 @@ services:
       PAI_CONTEXT_GRAPH_GENERATION_BUDGET_MICROUSD: ${PAI_CONTEXT_GRAPH_GENERATION_BUDGET_MICROUSD:-2500000}
       PAI_CONTEXT_GRAPH_PRIOR_EXPOSURE_MICROUSD: ${PAI_CONTEXT_GRAPH_PRIOR_EXPOSURE_MICROUSD:?set cumulative predecessor KG exposure before runtime startup}
       PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID: ${PAI_CONTEXT_GRAPH_BUDGET_AUTHORIZATION_ID:-}
+      # Paces KG provider request starts against this same process's live
+      # conversation traffic. Existed as a knob for isolated rebuild workers
+      # only; a persistent instance rebuilding a generation in the
+      # background needs it too, or its own KG work starves live chat of
+      # the same model's OpenRouter rate limit. 0 (unset) preserves the
+      # prior unthrottled default.
+      PAI_CONTEXT_GRAPH_PROVIDER_MIN_INTERVAL_SECONDS: ${PAI_CONTEXT_GRAPH_PROVIDER_MIN_INTERVAL_SECONDS:-0}
     ports:
       - "127.0.0.1:${PAI_WEB_PORT:-8080}:${PAI_WEB_PORT:-8080}"
     extra_hosts:
