@@ -934,11 +934,23 @@ fix a genuine mismatch."))
          (reasoning-details (gethash "reasoning_details" message))
          (reasoning-details-present-p
            (nth-value 1 (gethash "reasoning_details" message))))
+    ;; Tool use is closed during final synthesis, yet a model that wanted
+    ;; one more tool sometimes emits a call anyway. If it also produced a
+    ;; usable answer, keep the answer and drop the call; otherwise treat it
+    ;; as a retryable generation glitch instead of failing the turn.
+    (when (and (not tools-advertised-p)
+               (%recursive-json-present-p calls)
+               (not (and (vectorp calls) (zerop (length calls)))))
+      (if (and (stringp content)
+               (plusp (length (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                           content))))
+          (setf calls nil)
+          (error 'recursive-malformed-tool-call
+                 :tool-name "(after synthesis began)"
+                 :detail "Provider requested a tool after recursive synthesis began")))
     (if (and (%recursive-json-present-p calls)
              (not (and (vectorp calls) (zerop (length calls)))))
         (progn
-          (unless tools-advertised-p
-            (error "Provider requested a tool after recursive synthesis began"))
           (unless (and (vectorp calls) (plusp (length calls)))
             (error "Recursive provider tool_calls has invalid wire shape"))
           (when (and reasoning-details-present-p
