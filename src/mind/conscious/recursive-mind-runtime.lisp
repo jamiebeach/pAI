@@ -2164,7 +2164,7 @@ the complete failure receipt and may safely close this focus attempt."
             ;; retry here, since a fresh attempt typically produces
             ;; well-formed output -- unlike a genuine protocol mismatch, it
             ;; is not worth failing the turn over on the first occurrence.
-            (let ((malformed-tool-call-retries-remaining 1))
+            (let ((malformed-tool-call-retries-remaining 4))
               (loop
                 (let ((attempt-outcome
             (handler-case
