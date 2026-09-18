@@ -72,6 +72,48 @@ handle.  Ordinary graph descriptors have no role and return NIL."
     (let ((input (%cgi-input (%cg-object "contexts" (vector context) "mentions" mentions))))
       (setf (gethash "eligible_mentions" input) (coerce eligible 'vector)) input)))
 
+(defun %cgf-normalize-quote-text (text)
+  "Flatten cosmetic differences a model routinely introduces when it
+otherwise reproduces a quote verbatim: curly/smart quote characters
+collapsed to their straight ASCII equivalents, and any run of whitespace
+(including newlines) collapsed to a single space and trimmed. This must
+never paper over a genuine content difference -- a paraphrase, a
+reordering, an invented word -- only literal typographic substitution and
+whitespace shape are touched. Confirmed live 2026-09-18: sampling failed
+FORMATION_GROUP_EVIDENCE_INVALID diagnostic traces showed most rejections
+were exactly this (a curly quote flattened by the model, or a collapsed
+blank line), not fabricated evidence -- the one genuine fabrication
+sampled (a reordered quote) still fails after this normalization."
+  (let* ((straight-single
+           (map 'string
+                (lambda (char)
+                  (if (member (char-code char) '(#x2018 #x2019 #x201A #x201B))
+                      #\' char))
+                text))
+         (straight
+           (map 'string
+                (lambda (char)
+                  (if (member (char-code char) '(#x201C #x201D #x201E #x201F))
+                      #\" char))
+                straight-single)))
+    (string-trim
+     '(#\Space #\Tab #\Newline #\Return)
+     (with-output-to-string (out)
+       (let ((in-space nil))
+         (loop for char across straight
+               do (if (member char '(#\Space #\Tab #\Newline #\Return))
+                      (unless in-space (write-char #\Space out) (setf in-space t))
+                      (progn (write-char char out) (setf in-space nil)))))))))
+
+(defun %cgf-quote-found-p (quote text)
+  "SEARCH after %CGF-NORMALIZE-QUOTE-TEXT on both sides -- the grounding
+guarantee (the model's claimed quote genuinely appears in the source) is
+unchanged; only typographic near-misses stop being treated as evidence
+fabrication."
+  (and (stringp quote) (stringp text)
+       (search (%cgf-normalize-quote-text quote)
+               (%cgf-normalize-quote-text text))))
+
 (defun %cgf-groups (context mentions eligible response)
   "Validate a disjoint, source-anchored partial partition; never infer identity."
   (unless (%cgs-schema-valid-p response (gethash "schema" (gethash "value" (%cgf-group-spec context mentions eligible))))
@@ -84,12 +126,13 @@ handle.  Ordinary graph descriptors have no role and return NIL."
              (quote (gethash "quote" group))
              (representative (find (aref (gethash "mentions" group) 0) mentions
                                    :test #'equal :key (lambda (m) (gethash "mention" m)))))
-        (unless (and source (search quote (gethash "text" source))) (%cg-authority-fail "FORMATION_GROUP_EVIDENCE_INVALID"))
+        (unless (and source (%cgf-quote-found-p quote (gethash "text" source)))
+          (%cg-authority-fail "FORMATION_GROUP_EVIDENCE_INVALID"))
         (when (%cgf-participant-candidates-p)
           (unless (and representative
                        (equal (gethash "source" representative) (gethash "source" group))
-                       (or (search (gethash "quote" representative) quote)
-                           (search quote (gethash "quote" representative))))
+                       (or (%cgf-quote-found-p (gethash "quote" representative) quote)
+                           (%cgf-quote-found-p quote (gethash "quote" representative))))
             (%cg-authority-fail "FORMATION_GROUP_REPRESENTATIVE_INVALID")))
         (loop for id across (gethash "mentions" group) do
           (when (member id seen :test #'equal) (%cg-authority-fail "FORMATION_GROUP_OVERLAP"))
