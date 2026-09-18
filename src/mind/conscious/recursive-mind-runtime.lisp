@@ -907,6 +907,24 @@ quarantine; it never authorizes or reconstructs a tool call."
                (return-from %recursive-pseudo-tool-envelope-p t))))))
       nil)))
 
+(define-condition recursive-malformed-tool-call (error)
+  ((tool-name :initarg :tool-name :reader recursive-malformed-tool-call-tool-name)
+   (detail :initarg :detail :reader recursive-malformed-tool-call-detail))
+  (:report (lambda (condition stream)
+             (format stream "Malformed native tool call (~a): ~a"
+                     (recursive-malformed-tool-call-tool-name condition)
+                     (recursive-malformed-tool-call-detail condition))))
+  (:documentation "One native tool call in an otherwise-received provider
+response has an unparseable arguments string or invalid wire shape -- a
+stochastic model generation glitch (confirmed live 2026-09-18: two
+same-named calls in one turn merged into a single corrupt, truncated
+arguments string), not a deterministic protocol violation. %RECURSIVE-
+MODEL-BOUNDARY retries the whole model call once for this condition
+specifically, since asking again typically produces well-formed output;
+other synthesis errors (an unadvertised tool, a reply with neither
+content nor tool_calls) are not retried, since a fresh attempt would not
+fix a genuine mismatch."))
+
 (defun %recursive-normalize-assistant-message
     (response thread-id model-call-id tools-advertised-p)
   "Return a bounded runtime-owned assistant message, arguments, and overflow."
@@ -992,9 +1010,18 @@ quarantine; it never authorizes or reconstructs a tool call."
                                  *conscious-recursive-mind-graph-proposal-fn*))
                                (t
                                 *conscious-recursive-mind-tools-enabled-p*)))
-                  (error "Recursive native tool call has invalid wire shape"))
+                  (error 'recursive-malformed-tool-call
+                         :tool-name (if (%recursive-nonempty-string-p name 128)
+                                        name "<unknown>")
+                         :detail "invalid wire shape"))
                 (setf arguments
-                      (%recursive-parse-tool-arguments arguments-json)
+                      (handler-case
+                          (%recursive-parse-tool-arguments arguments-json)
+                        (error (condition)
+                          (error 'recursive-malformed-tool-call
+                                 :tool-name name
+                                 :detail (%conversation-condition-summary
+                                          condition))))
                       (aref parsed-arguments index) arguments
                       (aref owned-calls index)
                       (obj "id" runtime-id "type" "function" "function"
@@ -2119,6 +2146,15 @@ the complete failure receipt and may safely close this focus attempt."
              (%recursive-provider-profile-reasoning-enabled-p
               selected-provider-profile))
            (outcome
+            ;; A malformed native tool call (RECURSIVE-MALFORMED-TOOL-CALL,
+            ;; confirmed live 2026-09-18: two same-named calls in one turn
+            ;; merged into one corrupt arguments string) gets one whole-call
+            ;; retry here, since a fresh attempt typically produces
+            ;; well-formed output -- unlike a genuine protocol mismatch, it
+            ;; is not worth failing the turn over on the first occurrence.
+            (let ((malformed-tool-call-retries-remaining 1))
+              (loop
+                (let ((attempt-outcome
             (handler-case
                  (let ((response
                           (%conversation-time-phase
@@ -2177,6 +2213,13 @@ the complete failure receipt and may safely close this focus attempt."
                            (list :accepted message
                                  (%conversation-response-usage response)
                                  overflow pseudo-tool-p)))))
+              (recursive-malformed-tool-call (condition)
+                (if (plusp malformed-tool-call-retries-remaining)
+                    (progn (decf malformed-tool-call-retries-remaining) nil)
+                    (multiple-value-bind (code reason status condition-type)
+                        (%conversation-provider-failure-details condition)
+                      (list :failed code reason status condition-type
+                            *conscious-conversation-last-accounting-anomaly*))))
               (error (condition)
                 (multiple-value-bind (code reason status condition-type)
                     (%conversation-provider-failure-details condition)
@@ -2188,6 +2231,7 @@ the complete failure receipt and may safely close this focus attempt."
                                  :failed)
                         code reason status condition-type
                         *conscious-conversation-last-accounting-anomaly*))))))
+                  (when attempt-outcome (return attempt-outcome)))))))
       (when (member (first outcome) '(:accepted :reasoning-recovery))
         (let ((input-tokens (gethash "input_tokens" (third outcome))))
           (when (numberp input-tokens)
