@@ -39,7 +39,7 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    mem_limit: 4g
+    mem_limit: ${PAI_MEM_LIMIT:-4g}
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       BRAVE_API_KEY: ${BRAVE_API_KEY:-}

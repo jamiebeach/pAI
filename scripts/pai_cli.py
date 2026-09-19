@@ -1554,7 +1554,7 @@ def run(args: argparse.Namespace) -> int:
         [
             str(sbcl),
             "--dynamic-space-size",
-            "3072",
+            os.environ.get("PAI_SBCL_DYNAMIC_SPACE_MB", "3072"),
             "--script",
             str(repo / "scripts" / "conscious-conversation.lisp"),
         ],
