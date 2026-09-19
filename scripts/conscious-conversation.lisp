@@ -105,7 +105,7 @@
 
 (defparameter *conversation-provider-call-timeout-seconds*
   (%conversation-positive-timeout-env
-   "PAI_PROVIDER_CALL_TIMEOUT_SECONDS" 120 :optional t))
+   "PAI_PROVIDER_CALL_TIMEOUT_SECONDS" 600 :optional t))
 (defparameter *conversation-provider-connect-timeout-seconds*
   (%conversation-positive-timeout-env
    "PAI_PROVIDER_CONNECT_TIMEOUT_SECONDS" 10))
