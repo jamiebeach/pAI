@@ -42,7 +42,7 @@
   "Complete exactly one useful cognitive quantum in this provider call. Return control to Lisp promptly: request one available tool, record concrete progress through an available management tool, produce a bounded conclusion, or yield when no useful next action is available. Do not attempt to exhaust the entire investigation in one uninterrupted response. Further work belongs in a later model boundary or quiet cycle.")
 (defparameter *conscious-recursive-mind-max-model-boundaries* 30)
 (defparameter *conscious-recursive-mind-max-tool-boundaries* 30)
-(defparameter *conscious-recursive-mind-max-tool-input-characters* 16384)
+(defparameter *conscious-recursive-mind-max-tool-input-characters* 65536)
 (defparameter *conscious-recursive-mind-max-tool-result-characters* 32768)
 (defparameter *conscious-recursive-curiosity-attention-page-size* 20)
 (defparameter *conscious-recursive-curiosity-quiescent-reappraisal-seconds* 1800
@@ -555,7 +555,7 @@ native root belongs to a different projection."
        (obj "type" "function" "function"
             (obj "name" "bash"
                  "description"
-                 "Run one Bash command in the configured workspace under the process's OS-enforced authority."
+                 "Run one Bash command in the configured workspace under the process's OS-enforced authority. The command may be at most about 60000 characters after JSON escaping; write long files in several smaller appended commands rather than one huge heredoc, since very long generations are slow and fragile."
                  "parameters"
                  (obj "type" "object" "additionalProperties" nil
                       "properties"
