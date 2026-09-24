@@ -19,8 +19,10 @@ audit. Canonical streaming top-K retrieval and bounded winner hydration remain.
 The older executor/outbox and destructive ledger repair utility are not imported.
 
 Source qualification passed for local commit `7b9fb1c1`; the development restart
-and new inbox endpoint passed. A live conversation/retrieval/board canary and
-second-instance promotion remain pending. See [current status](current-status.md)
+and new inbox endpoint passed. Conversation continuity passed. A subsequent
+canonical capability-context correction passed the focused recursive suite and
+live memory-tool canary; activity/peer/board checks and second-instance promotion
+remain pending. See [current status](current-status.md)
 for the qualification caveat and source-copy compatibility evidence. Source
 backups retain rejected private variants outside the source inventory; instance
 identity, configuration and state remain local.

@@ -18,6 +18,30 @@
 
 (format t "~%== durable recursive mind ==~%")
 
+;; Recursive capability prose must not inherit the conversation-only fallback.
+;; Keep this before the suite's runtime doubles are installed.
+(let* ((old (vector (%conversation-record
+                     "q45:schema" "No native tool is available for this model request.")))
+       (sections (obj "tools-proposal-schema" old
+                      "triggering-stimuli" (vector)))
+       (replacement (%recursive-capability-sections sections))
+       (encoded (shasht:write-json replacement nil)))
+  (crm-check "recursive capability section removes false conversation denial"
+             (not (search "No native tool is available for this model request." encoded)))
+  (crm-check "recursive capability section defers to current attached schemas"
+             (search "schemas attached to the current model request are authoritative" encoded))
+  (crm-check "recursive capability section permits no tools when schemas absent"
+             (search "If no schemas are attached, no native tool is available" encoded))
+  (crm-check "recursive capability section respects final synthesis"
+             (search "Runtime final-synthesis instructions close tool use" encoded))
+  (crm-check "recursive capability section requires execution evidence"
+             (search "matching runtime tool-result receipt" encoded))
+  (crm-check "recursive capability section preserves original conversation spec"
+             (eq old (gethash "tools-proposal-schema" sections)))
+  (crm-check "recursive capability section preserves unrelated sections"
+             (eq (gethash "triggering-stimuli" sections)
+                 (gethash "triggering-stimuli" replacement))))
+
 (let* ((root (crm-event
               70001 "agent-stimulus-received"
               (obj "source" "fleet-board" "text" "Synthetic peer question"
@@ -642,6 +666,30 @@
                      (%conversation-model-messages
                       assembled nil "What is my fixture relationship?")
                      nil)))
+             (dolist (enabled '(nil t))
+               (dolist (private-p '(nil t))
+                 (let* ((*conscious-recursive-mind-tools-enabled-p* enabled)
+                        (recursive-context
+                          (%recursive-assembly-context spec "thread:capability" 7 private-p))
+                        (recursive-opened
+                          (conscious-context-assemble (obj "state_revision" 7)
+                                                      recursive-context))
+                        (messages
+                          (%recursive-base-model-messages
+                           recursive-opened "What is my fixture relationship?" private-p nil))
+                        (wire (shasht:write-json messages nil)))
+                   (crm-check "production recursive request removes inherited capability denial"
+                              (and (not (search "No native tool is available for this model request." wire))
+                                   (search "schemas attached to the current model request are authoritative" wire)))
+                   (crm-check "production recursive capability metadata respects primitive switch"
+                              (eq (not (null enabled))
+                                  (not (null (find "search-memory"
+                                                   (gethash "available_tools" recursive-context)
+                                                   :test #'equal)))))
+                   (crm-check "production recursive final synthesis closes tools explicitly"
+                              (search "runtime has closed tool use"
+                                      (shasht:write-json
+                                       (%recursive-final-synthesis-messages messages private-p) nil))))))
              (crm-check "production composition loads the shipped history profile"
                         (and (= 5 (gethash "revision" profile))
                              (= 100 (gethash "history_max_events" profile))

@@ -2791,6 +2791,20 @@ Never mutate the shared hot generation or infer tool calls from receipts."
   (>= (%recursive-transcript-tool-result-characters projection)
       *conscious-recursive-mind-max-total-tool-result-characters*))
 
+(defun %recursive-capability-sections (sections)
+  "Replace conversation-only capability prose without mutating its source spec.
+The provider boundary owns the actual schemas, including tool-free synthesis."
+  (let ((copy (alexandria:copy-hash-table sections)))
+    (setf (gethash "tools-proposal-schema" copy)
+          (map 'vector
+               (lambda (record)
+                 (let ((replacement (alexandria:copy-hash-table record)))
+                   (setf (gethash "content" replacement)
+                         "For this recursive invocation, the native tool schemas attached to the current model request are authoritative. Use only those functions with their declared arguments. If no schemas are attached, no native tool is available for this invocation. Runtime final-synthesis instructions close tool use. A tool call is only a request: claim execution or results only after a matching runtime tool-result receipt. Historical capability statements do not establish current availability.")
+                   replacement))
+               (gethash "tools-proposal-schema" sections)))
+    copy))
+
 (defun %recursive-assembly-context (spec thread-id state-revision private-p)
   (make-conscious-assembly-context
    :pulse-id thread-id :purpose (if private-p "orient" "respond")
@@ -2800,7 +2814,7 @@ Never mutate the shared hot generation or infer tool calls from receipts."
    :clock-identity "host-universal-time"
    :total-character-budget (gethash "total_character_budget" spec)
    :section-character-budgets (gethash "section_character_budgets" spec)
-   :sections (gethash "sections" spec)
+   :sections (%recursive-capability-sections (gethash "sections" spec))
    :eligible-evidence-ids (gethash "eligible_evidence_ids" spec)
    :available-tools
    (coerce

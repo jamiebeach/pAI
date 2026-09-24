@@ -32,8 +32,18 @@ The serial tracing overhead check initially measured 2.58% against its unchanged
 0.29%. The initial failure remains recorded rather than being counted as a pass.
 
 The development deployment restarted successfully with the new inbox present
-and private configuration unchanged. The remaining promotion gate is a live
-conversation/retrieval/board canary, then installation in the second instance.
+and private configuration unchanged. A live canary exposed inherited
+conversation-only capability prose denying tools that were actually attached.
+The canonical follow-up replaces that prose only for recursive assembly,
+preserves the source spec, and defers to current native schemas and final-synthesis
+restrictions. Reject the alternative of enabling additional permissions or
+changing provider configuration: neither addresses the contradictory context.
+The focused recursive suite passes 530 checks; offline load and wrap completeness
+pass. After mirroring and restart, captured requests contain the corrected text
+and a durable memory-search execution/result followed by a reply. Conversation
+continuity also passed. These results do not substitute for qualification of the
+whole follow-up or the remaining activity/peer/board promotion checks.
+Second-instance installation remains held until those gates are complete.
 A providerless startup against an independent copy of the second instance's
 state passed after explicit checkpoint rebuilding. Every original event was
 preserved; startup appended projection-state records only. This is compatibility
