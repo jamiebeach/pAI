@@ -1,8 +1,9 @@
 # Source replica reconciliation — 2026-09-24
 
-The initial inventory and first-slice evidence below are historical. The
-qualified publication baseline is now `41d43dc1`; its first-run/rebuild gates
-passed. See [current status](current-status.md) for the active promotion state.
+The initial inventory and first-slice evidence below are historical. Public
+source and both replica promotions have since advanced; see
+[current status](current-status.md) for the current commit, qualification caveat
+and promotion outcome.
 
 ## Remaining behavior port
 
@@ -53,14 +54,15 @@ this record.
 - Private peer-backlog UI depends on an alternate inspection/executor path.
   Canonical event-history visibility is accepted; that live inspector is not
   yet ported or qualified.
-- The private exact-memory cache and observation-coverage changes still require
-  semantic comparison. Differences are not automatically bugs or improvements.
+- The private exact-memory cache was rejected after semantic comparison;
+  canonical bounded retrieval remains. Exact observation coverage was ported
+  through the registered board observer and tested separately.
 
 ## Promotion boundary
 
-This slice is not a second-instance promotion or a release claim. Preserve
-the target's dirty source before any replacement. Required first-run/rebuild
-qualification remains open, along with the full promotion profile and the
-remaining semantic review. Confirm the accepted slice in the development
-instance before touching the second instance. Instance configuration, secrets,
-state and private documents must never enter the canonical source inventory.
+At the time of this first slice, second-instance promotion and full release
+qualification remained open. Their later outcomes are recorded in
+[current status](current-status.md). The boundary remains: preserve dirty target
+source before replacement, confirm behavior in development first, and keep
+instance configuration, secrets, state and private documents outside the
+canonical inventory.

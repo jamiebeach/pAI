@@ -18,6 +18,12 @@ Larger or stale/incomplete projections require stopped-instance maintenance;
 successful partial rebuilding is not successful maintenance. Empty reviewed
 graphs still publish a checkpoint. See [recovery](first-run-qualification.md).
 
+The event-authority activity indexes are a separate, explicit preparation step.
+Activity reads use named indexes and fail closed if they are absent; ordinary
+startup and projection rebuilding do not create them implicitly. Existing
+instances must prepare and verify the root, scope and identity indexes while
+stopped and backed up before admitting sustained-activity operator turns.
+
 The recursive runtime still retains a checkpoint-backed hot event projection.
 Indexed row-backed readers and shadow/parity tests exist, but their existence
 does not mean every live consumer has completed that migration. Full replay is

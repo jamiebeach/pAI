@@ -20,8 +20,16 @@ captured conversations never travel with the candidate.
    repository. A dirty overlapping target file requires an explicit merge
    decision; copying over it is not a default promotion step.
 4. Apply only the reviewed allowlist to one development instance. Verify hashes
-   against the candidate, run its local load/startup checks, and restart once.
-   Keep the previous image and backup until the canary passes.
+   against the candidate. On a large or stale event authority, run the explicit
+   offline checkpoint rebuild while stopped and verify conscious, recursive and
+   reviewed-graph receipts plus unchanged original event rows. Independently
+   check the event authority for `pai_activity_root_idx`,
+   `pai_activity_scope_idx` and `pai_activity_identity_idx`; if missing, run the
+   canonical `storage-prepare-activity-index` maintenance action while stopped
+   and backed up. Neither startup nor projection rebuilding creates these
+   indexes implicitly, and indexed activity reads must not silently fall back.
+   Then run local load/startup checks and restart once. Keep the previous image
+   and backup until the canary passes.
 5. Canary startup memory/time, first-message latency, complete recent-turn
    continuity, retained tool results, activity continuation, semantic-memory
    retrieval, one durable peer receipt, and a board-local reply. Check the

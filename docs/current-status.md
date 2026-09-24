@@ -4,56 +4,50 @@ Updated 2026-09-24. This is the current navigation and planning entry point.
 Dated reconciliation documents preserve historical decisions and intermediate
 failures; their old "pending" statements are not the current release status.
 
-## Qualified baseline
+## Canonical source and qualification
 
-Public commit `41d43dc1` reconciled the canonical implementation and passed the
-243-suite isolated Lisp run, offline load, wrap completeness, both Python
-discovery profiles, separately required worker and serial performance profiles,
-and synthetic first start, restart, missing-derived recovery and explicit
-offline rebuild. Environment-specific Python skips were covered separately.
-These are source and synthetic-install results, not a claim that all long-lived
-agent behavior is correct. Dependencies still need the lock/notice work recorded
-in [dependency provenance](dependency-provenance.md).
+The promoted runtime candidate is `1a67ccde`. Its 718-file inventory includes
+exact late peer-notification coverage, a bounded content-free inbox view, and a
+recursive capability-context correction that defers to the tools attached to a
+request. The older unbounded decoded-memory cache, private executor/outbox and
+ledger repair utility were not adopted. Keep canonical bounded retrieval and
+external-connection integrity checks.
 
-The development deployment matched the 716-file baseline inventory. Its restart
-and authenticated observability checks passed; private identity, configuration
-and state remained separate. A second deployment remained held for the semantic
-reconciliation described below. Private paths, histories and backup receipts are
-deliberately outside this repository.
+The exact candidate passed the 243-suite isolated Lisp run, offline load, wrap
+completeness, both Python discovery profiles (with separately covered host-only
+skips), the Docker worker, serial observability, synthetic first start/restart,
+missing-derived recovery and explicit offline rebuild. Content, provenance and
+secret checks passed. The required publication timing benchmark did **not** pass:
+0.664 ms against its unchanged 0.55 ms limit. A paired baseline also failed
+under reported host pressure. The operator accepted this timing limitation for
+the current publication; neither the threshold nor the failed result was
+rewritten as a pass. Dependency lock/notice work remains in
+[dependency provenance](dependency-provenance.md).
 
-## Current reconciliation slice
+## Replica promotion state
 
-Local source commit `7b9fb1c1` adds exact late-notification coverage and a
-content-free peer backlog view to the canonical stimulus pipeline. All 243
-isolated Lisp suites, both Python profiles, offline load, wrap completeness,
-worker, synthetic first-run/rebuild and publication performance gates passed.
-The serial tracing overhead check initially measured 2.58% against its unchanged
-2% limit; three predeclared repeats pinned to one CPU passed at 0.58%, 0.30% and
-0.29%. The initial failure remains recorded rather than being counted as a pass.
+The development instance matches all 718 canonical files in both its checkout
+and deployment. Its separate experimental extras, identity, configuration and
+state remain local. Live conversation continuity, an actual memory-search tool
+result, peer receipt, board-local reply and durable private-activity completion
+were verified independently of model claims.
 
-The development deployment restarted successfully with the new inbox present
-and private configuration unchanged. A live canary exposed inherited
-conversation-only capability prose denying tools that were actually attached.
-The canonical follow-up replaces that prose only for recursive assembly,
-preserves the source spec, and defers to current native schemas and final-synthesis
-restrictions. Reject the alternative of enabling additional permissions or
-changing provider configuration: neither addresses the contradictory context.
-The focused recursive suite passes 530 checks; offline load and wrap completeness
-pass. After mirroring and restart, captured requests contain the corrected text
-and a durable memory-search execution/result followed by a reply. Conversation
-continuity also passed. These results do not substitute for qualification of the
-whole follow-up or the remaining activity/peer/board promotion checks.
-Second-instance installation remains held until those gates are complete.
-A providerless startup against an independent copy of the second instance's
-state passed after explicit checkpoint rebuilding. Every original event was
-preserved; startup appended projection-state records only. This is compatibility
-evidence, not a live conversation canary or a completed second promotion.
+The second instance also matches all 718 canonical files in both locations and
+has no active extra source. Its prior source variants were archived recoverably.
+An independent stopped-state backup preceded installation. Offline conscious,
+recursive and reviewed-graph checkpoint rebuilds passed with all original event
+rows unchanged. The older event authority lacked the deliberately explicit
+activity indexes: a first live request was rejected before admission, then
+stopped-instance index preparation created all three. After restart, an
+authenticated live request executed `search-memory`, returned one result and
+produced a durable reply. Private identity and configuration stayed local and
+unchanged. Backup paths, ledger identifiers and credentials are kept in the
+private promotion receipt, not this repository.
 
-Keep canonical bounded retrieval and external-connection integrity checks;
-do not replace them with a generation-sized decoded memory cache. The
-[replica reconciliation record](source-replica-reconciliation-20260924.md)
-records decisions. Deployment paths, configuration and backup receipts stay in
-the private promotion record. The new local slice has not yet been published.
+This establishes source parity and bounded canaries, not correctness of every
+long-lived cognitive behavior. Follow the [promotion runbook](public-source-promotion-runbook.md)
+for future instances; checkpoint rebuilding and activity-index preparation are
+distinct stopped-state maintenance operations.
 
 ## Next investigation, not part of source synchronization
 
