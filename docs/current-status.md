@@ -23,14 +23,27 @@ deliberately outside this repository.
 
 ## Current reconciliation slice
 
-Port exact late-notification coverage and a content-free peer backlog view to
-the canonical stimulus pipeline, qualify the final candidate, then validate the
-development deployment before promoting the same source to the second instance.
+Local source commit `7b9fb1c1` adds exact late-notification coverage and a
+content-free peer backlog view to the canonical stimulus pipeline. All 243
+isolated Lisp suites, both Python profiles, offline load, wrap completeness,
+worker, synthetic first-run/rebuild and publication performance gates passed.
+The serial tracing overhead check initially measured 2.58% against its unchanged
+2% limit; three predeclared repeats pinned to one CPU passed at 0.58%, 0.30% and
+0.29%. The initial failure remains recorded rather than being counted as a pass.
+
+The development deployment restarted successfully with the new inbox present
+and private configuration unchanged. The remaining promotion gate is a live
+conversation/retrieval/board canary, then installation in the second instance.
+A providerless startup against an independent copy of the second instance's
+state passed after explicit checkpoint rebuilding. Every original event was
+preserved; startup appended projection-state records only. This is compatibility
+evidence, not a live conversation canary or a completed second promotion.
+
 Keep canonical bounded retrieval and external-connection integrity checks;
 do not replace them with a generation-sized decoded memory cache. The
 [replica reconciliation record](source-replica-reconciliation-20260924.md)
-records decisions. Promotion evidence belongs in a private receipt until its
-non-private summary is verified.
+records decisions. Deployment paths, configuration and backup receipts stay in
+the private promotion record. The new local slice has not yet been published.
 
 ## Next investigation, not part of source synchronization
 

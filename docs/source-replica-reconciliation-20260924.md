@@ -18,9 +18,12 @@ generation-sized rows/vectors and omits the newer foreign-connection integrity
 audit. Canonical streaming top-K retrieval and bounded winner hydration remain.
 The older executor/outbox and destructive ledger repair utility are not imported.
 
-Candidate qualification and per-instance promotion are still required for this
-new slice. Source backups retain rejected private variants outside the source
-inventory; instance identity, configuration and state remain local.
+Source qualification passed for local commit `7b9fb1c1`; the development restart
+and new inbox endpoint passed. A live conversation/retrieval/board canary and
+second-instance promotion remain pending. See [current status](current-status.md)
+for the qualification caveat and source-copy compatibility evidence. Source
+backups retain rejected private variants outside the source inventory; instance
+identity, configuration and state remain local.
 
 Canonical source starts at `253d0a42`. A second private deployment was compared
 read-only against its 715-file inventory. The host has 39 missing files, 59
