@@ -76,10 +76,11 @@ agent landscape, see [pAI in the Agent Landscape](docs/related-work.md).
 
 ## Status
 
-**Local candidate for a developer preview.** The source runs in an existing
-development installation. Empty-state installation, the complete test
-contract, and release provenance are still being qualified. This tree is not
-a production deployment.
+**Pre-release developer preview.** The published reconciliation baseline passed
+the isolated source gates and synthetic installation/restart/rebuild checks.
+Live cognitive behavior and dependency provenance still have open work; this
+is not a production-readiness claim. See [current status and plan](docs/current-status.md)
+and the [implemented architecture](docs/architecture.md).
 
 Loading defines the system; explicit initialization starts its activities.
 Every derived projection must remain rebuildable from the event log.

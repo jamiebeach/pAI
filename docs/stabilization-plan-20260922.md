@@ -1,5 +1,9 @@
 # Stabilization and promotion plan — 2026-09-22
 
+Historical working record. Its intermediate counts and pending gates describe
+the revision at each entry. Use [current status](current-status.md) for the
+active plan and [architecture](architecture.md) for implemented boundaries.
+
 This plan consolidates the current fleet, retrieval, and working-context work
 before any further deployment to private agents. The public source candidate is
 the canonical implementation. Private trees are deployment targets and evidence

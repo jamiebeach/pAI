@@ -1021,6 +1021,30 @@ An opaque content revision pins pagination; timestamps are not revisions."
                                               (gethash "thread_id" payload)) nil)
                     (funcall next event)))))
 
+(register-layer recursive-observation-covers-stimulus-p fleet-board-coverage
+  :function
+  (lambda (next observation event)
+    (let ((payload (gethash "payload" event))
+          (messages (gethash "messages" observation)))
+      (if (and (equal "peer-message-received" (gethash "type" event))
+               (hash-table-p payload)
+               (equal "fleet-board-thread" (gethash "kind" observation))
+               (equal "observed" (gethash "status" observation))
+               (stringp (gethash "board_owner_id" payload))
+               (stringp (gethash "thread_id" payload))
+               (equal (gethash "board_owner_id" payload) (gethash "owner_id" observation))
+               (equal (gethash "thread_id" payload) (gethash "resource_id" observation))
+               (vectorp messages) (not (stringp messages)))
+          (some (lambda (message)
+                  (and (hash-table-p message)
+                       (every (lambda (pair)
+                                (let ((value (gethash (car pair) payload)))
+                                  (and (stringp value)
+                                       (equal value (gethash (cdr pair) message)))))
+                              '(("message_id" . "msg_id") ("sender_id" . "author_id")
+                                ("text" . "text"))))) messages)
+          (funcall next observation event)))))
+
 (defun fleet-board-read-or-list (thread-id)
   "Read THIS agent's own board: THREAD-ID's messages if given (non-null,
 non-empty), otherwise the full thread listing. A single-arity wrapper

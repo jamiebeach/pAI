@@ -6390,6 +6390,75 @@
              (zerop (length (%recursive-recent-activity-records
                              (list earlier receipt current) spec 77103)))))
 
+(let* ((observation (obj "kind" "fleet-board-thread" "status" "observed"
+                         "owner_id" "board-fixture" "resource_id" "thread-fixture"
+                         "messages" (vector (obj "msg_id" "message-fixture"
+                                                  "author_id" "peer-fixture" "text" "Synthetic evidence"))))
+       (read (crm-event 80002 "recursive-tool-result"
+                        (obj "tool_name" "observe-environment" "execution_status" "executed"
+                             "content" (shasht:write-json observation nil)) 80001))
+       (done (crm-event 80003 "recursive-stimulus-result" (obj "status" "completed") 80001))
+       (receipt (crm-event 80004 "peer-message-received"
+                           (obj "board_owner_id" "board-fixture" "thread_id" "thread-fixture"
+                                "message_id" "message-fixture" "sender_id" "peer-fixture"
+                                "text" "Synthetic evidence")))
+       (events (list read done receipt))
+       (original (symbol-function '%conversation-append-readable))
+       (writes nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function '%conversation-append-readable)
+               (lambda (type payload &key caused-by)
+                 (let ((event (crm-event (+ 80005 (length writes)) type payload caused-by)))
+                   (push event writes) (values (gethash "id" event) event))))
+         (crm-check "exact late notification is covered with durable proof"
+                    (and (%recursive-reconcile-observed-stimuli-one events "recursive-fixture")
+                         (= 1 (length writes))
+                         (= 80002 (gethash "coverage_event_id" (gethash "payload" (first writes))))))
+         (let ((settled (append events (reverse writes))))
+           (crm-check "covered receipt cannot start a separate turn"
+                      (null (%recursive-pending-stimuli settled "recursive-fixture")))
+           (crm-check "interrupted coverage repairs consumption once"
+                      (%recursive-reconcile-observed-stimuli-one settled "recursive-fixture"))
+           (crm-check "replayed coverage is idempotent"
+                      (not (%recursive-reconcile-observed-stimuli-one
+                            (append events (reverse writes)) "recursive-fixture"))))
+         (dolist (extra (list (crm-event 80005 "model-request" (obj) 80004)
+                             (crm-event 80005 "recursive-peer-message-retry-opened" (obj) 80001)
+                             (crm-event 80005 "recursive-stimulus-result" (obj "status" "failed") 80001)
+                             (crm-event 80005 "agent-stimulus-received" (obj) 80004)
+                             (crm-event 80005 "recursive-activity-opened"
+                                        (obj "source_event_ids" #(80004)) 80004)))
+           (crm-check "started, retried, failed, linked or owned receipt fails closed"
+                      (not (%recursive-reconcile-observed-stimuli-one
+                            (append events (list extra)) "recursive-fixture"))))
+         (crm-check "unsuccessful observation cannot cover receipt"
+                    (not (%recursive-reconcile-observed-stimuli-one (list read receipt) "recursive-fixture")))
+         (crm-check "other agent cannot cover receipt"
+                    (not (%recursive-reconcile-observed-stimuli-one events "other-fixture")))
+         (dolist (key '("board_owner_id" "thread_id" "message_id" "sender_id" "text"))
+           (let* ((payload (gethash "payload" receipt)) (old (gethash key payload)))
+             (setf (gethash key payload) "different")
+             (crm-check "board coverage requires every exact field"
+                        (not (recursive-observation-covers-stimulus-p observation receipt)))
+             (setf (gethash key payload) old)))
+         (let* ((report (%recursive-peer-message-inspection-build events "recursive-fixture" 1))
+                (row (aref (gethash "items" report) 0)))
+           (crm-check "peer inbox is scoped, bounded and content-free"
+                      (and (= 1 (gethash "pending_count" report))
+                           (= 1 (length (gethash "items" report)))
+                           (equal "retained-recursive-projection" (gethash "scope" report))
+                           (not (gethash "text" row)))))
+         (crm-check "peer inbox excludes foreign agents"
+                    (zerop (gethash "total" (%recursive-peer-message-inspection-build events "other-fixture" 1))))
+         (crm-check "peer inbox follows canonical generic completion"
+                    (zerop (gethash "pending_count"
+                                    (%recursive-peer-message-inspection-build
+                                     (append events (list (crm-event 80005 "recursive-stimulus-result"
+                                                                     (obj "status" "completed") 80004)))
+                                     "recursive-fixture" 1)))))
+      (setf (symbol-function '%conversation-append-readable) original)))
+
 (format t "~%Durable recursive mind: ~d passed, ~d failed~%"
         *crm-pass* *crm-fail*)
 (when (plusp *crm-fail*) (uiop:quit 1))

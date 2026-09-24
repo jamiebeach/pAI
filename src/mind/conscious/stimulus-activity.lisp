@@ -1,6 +1,156 @@
 ;;;; Replayable ownership of related retained stimuli. No implicit admission.
 (in-package :agent)
 
+(define-seam recursive-observation-covers-stimulus-p (observation event)
+  "Adapter proof of exact experienced content. Similarity is not coverage."
+  (declare (ignore observation event)) nil)
+
+(defun %recursive-reconcile-observed-stimuli-one (events agent-id)
+  "Journal at most one coverage or consumption record; never run a tool.
+Only a successful retained private attempt can cover an unstarted receipt.
+Retry boundaries invalidate earlier observations. Missing evidence fails closed."
+  (let ((reads (make-hash-table :test #'equal))
+        (finished (make-hash-table :test #'equal))
+        (dispositions (make-hash-table :test #'equal))
+        (started (make-hash-table :test #'equal))
+        (linked (make-hash-table :test #'equal))
+        (consumed (make-hash-table :test #'equal))
+        (owners (%recursive-activity-membership events agent-id))
+        (receipts nil))
+    (dolist (event events)
+      (when (equal agent-id (gethash "agent_id" event))
+        (let ((type (gethash "type" event)) (root (gethash "caused_by" event))
+              (payload (gethash "payload" event)))
+          (cond
+            ((equal type "peer-message-received") (push event receipts))
+            ((equal type "agent-stimulus-received") (setf (gethash root linked) t))
+            ((equal type "model-request") (setf (gethash root started) t))
+            ((member type '("recursive-peer-message-retry-opened"
+                            "recursive-stimulus-retry-opened") :test #'equal)
+             (remhash root reads) (remhash root finished)
+             (remhash root dispositions))
+            ((member type '("recursive-peer-message-result" "recursive-stimulus-result")
+                     :test #'equal)
+             (setf (gethash root finished)
+                   (and (equal "completed" (gethash "status" payload))
+                        (gethash "id" event))))
+            ((member type '("recursive-peer-message-disposition" "recursive-stimulus-disposition")
+                     :test #'equal)
+             (setf (gethash root dispositions) payload))
+            ((equal type "stimulus-consumed")
+             (loop for id across (gethash "stimulus_ids" payload #())
+                   do (setf (gethash id consumed) t)))
+            ((and (equal type "recursive-tool-result")
+                  (equal "observe-environment" (gethash "tool_name" payload))
+                  (equal "executed" (gethash "execution_status" payload)))
+             (let ((value (ignore-errors (shasht:read-json (gethash "content" payload)))))
+               (when (and (hash-table-p value) (equal "observed" (gethash "status" value)))
+                 (push (cons event value) (gethash root reads)))))))))
+    (dolist (receipt (nreverse receipts))
+      (let* ((id (gethash "id" receipt))
+             (prior (gethash id dispositions))
+             (token (format nil "stimulus:~a" id)))
+        (unless (or (gethash id owners) (gethash id linked)
+                    (gethash id started) (gethash token consumed))
+          ;; Repair only our own interrupted settlement, not another policy's.
+          (when (and prior (equal "covered" (gethash "disposition" prior))
+                     (integerp (gethash "coverage_event_id" prior)))
+            (%conversation-append-readable
+             "stimulus-consumed"
+             (obj "agent_id" agent-id "stimulus_ids" (vector token)
+                  "consumer" "recursive-observation-v1" "disposition" "covered")
+             :caused-by id)
+            (return-from %recursive-reconcile-observed-stimuli-one t))
+          (unless prior
+            (let ((proof nil) (leader nil))
+              (maphash
+               (lambda (root observations)
+                 (let ((settled (gethash root dispositions)))
+                   (when (and (gethash root finished)
+                              ;; Generic completion is durable without a separate
+                              ;; disposition; explicit adverse settlement vetoes it.
+                              (or (null settled)
+                                  (member (gethash "disposition" settled)
+                                          '("completed" "absorbed" "replied") :test #'equal)))
+                     (dolist (entry observations)
+                       (when (and (< (gethash "id" (car entry)) id)
+                                  (< (gethash "id" (car entry)) (gethash root finished))
+                                  (recursive-observation-covers-stimulus-p (cdr entry) receipt)
+                                  (or (null proof) (> (gethash "id" (car entry))
+                                                     (gethash "id" proof))))
+                         (setf proof (car entry) leader root)))))) reads)
+              (when proof
+                (%conversation-append-readable
+                 "recursive-stimulus-disposition"
+                 (obj "schema_version" 1 "receipt_event_id" id
+                      "activity_root_event_id" leader
+                      "coverage_event_id" (gethash "id" proof)
+                      "disposition" "covered" "settled_at" (get-universal-time))
+                 :caused-by id)
+                (return-from %recursive-reconcile-observed-stimuli-one t)))))))
+    nil))
+
+(defun %recursive-peer-message-inspection-build (events agent-id limit)
+  "Content-free bounded rows over the retained projection, not a lifetime count."
+  (unless (and (integerp limit) (<= 1 limit 100))
+    (error "Peer inspection limit must be between 1 and 100"))
+  (let ((receipts nil) (rows nil) (total 0)
+        (owners (%recursive-activity-membership events agent-id))
+        (links (make-hash-table :test #'equal))
+        (states (make-hash-table :test #'equal))
+        (counts (make-hash-table :test #'equal)))
+    (dolist (event events)
+      (when (equal agent-id (gethash "agent_id" event))
+        (let ((type (gethash "type" event)) (root (gethash "caused_by" event))
+              (payload (gethash "payload" event)))
+          (cond
+            ((equal type "peer-message-received") (push event receipts))
+            ((equal type "agent-stimulus-received")
+             (setf (gethash root links) (gethash "id" event)))
+            ((equal type "model-request") (setf (gethash root states) "processing"))
+            ((member type '("recursive-peer-message-retry-opened" "recursive-stimulus-retry-opened") :test #'equal)
+             (setf (gethash root states) "retry-eligible"))
+            ((member type '("recursive-peer-message-result" "recursive-stimulus-result") :test #'equal)
+             (setf (gethash root states) (gethash "status" payload "outcome-unknown")))
+            ((member type '("recursive-peer-message-disposition" "recursive-stimulus-disposition") :test #'equal)
+             (setf (gethash root states) (gethash "disposition" payload "outcome-unknown")))
+            ((equal type "stimulus-consumed")
+             (unless (gethash root states)
+               (setf (gethash root states) (gethash "disposition" payload "consumed"))))))))
+    (dolist (receipt receipts)
+      (let* ((id (gethash "id" receipt)) (payload (gethash "payload" receipt))
+             (effective (or (gethash id links) id))
+             (owner (gethash effective owners))
+             (state (or (gethash effective states)
+                        (and owner (/= owner effective) "grouped") "pending")))
+        (incf total) (incf (gethash state counts 0))
+        (when (< (length rows) limit)
+          (push (obj "receipt_event_id" id "activity_root_event_id" (or owner :null)
+                     "activity_state" (or (gethash owner states) :null)
+                     "received_at" (gethash "timestamp" receipt :null)
+                     "sender_id" (gethash "sender_id" payload :null)
+                     "sender_name" (gethash "sender_name" payload "peer")
+                     "thread_id" (gethash "thread_id" payload :null)
+                     "message_id" (gethash "message_id" payload :null) "state" state) rows))))
+    (obj "schema_version" 1 "scope" "retained-recursive-projection"
+         "total" total "counts" counts
+         "pending_count" (loop for state in '("pending" "processing" "deferred" "waiting" "retry-eligible")
+                               sum (gethash state counts 0))
+         "items" (coerce rows 'vector))))
+
+(defun conscious-recursive-peer-message-inspect (&optional (limit 20))
+  "Read-only retained inbox view; no replay, reconciliation or admission."
+  (multiple-value-bind (events head)
+      (bt:with-lock-held (*conscious-recursive-thread-events-cache-lock*)
+        (unless *conscious-recursive-thread-events-cache-key*
+          (return-from conscious-recursive-peer-message-inspect :null))
+        (values (copy-list *conscious-recursive-thread-events-cache*)
+                *conscious-recursive-thread-events-cache-head*))
+    (let ((report (%recursive-peer-message-inspection-build
+                   events *conscious-recursive-mind-agent-id* limit)))
+      (setf (gethash "as_of_ledger_position" report) head)
+      report)))
+
 (define-seam recursive-stimulus-activity-key (event)
   "Pure adapter-owned resource identity, not a similarity judgment."
   (let* ((context (recursive-stimulus-context event))

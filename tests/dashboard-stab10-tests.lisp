@@ -319,5 +319,20 @@
                               (equal '(1 2) (mapcar (lambda (row) (gethash "id" row)) rows))))))
     (setf (symbol-function 'replay-events) original)))
 
+(let ((calls 0))
+  (setf (fdefinition 'conscious-recursive-peer-message-inspect)
+        (lambda (&optional limit) (declare (ignore limit))
+          (incf calls)
+          (obj "scope" "retained-recursive-projection" "pending_count" 2 "items" #())))
+  (let ((report (%dashboard-observability-live-report)))
+    (dash10-check "live inbox is read once and shared with attention"
+                  (and (= calls 1)
+                       (eq (gethash "peer_inbox" report)
+                           (gethash "peer_inbox" (gethash "attention" report))))))
+  (dash10-check "peer inbox UI is wired with explicit retained scope"
+                (and (search "peer-inbox" *observability-dashboard-html*)
+                     (search "renderPeerInbox(live.peer_inbox)" *observability-dashboard-js*)
+                     (search "not a lifetime ledger count" *observability-dashboard-js*))))
+
 (format t "~%~a passed, ~a failed~%" *dash10-pass* *dash10-fail*)
 (when (plusp *dash10-fail*) (sb-ext:exit :code 1))

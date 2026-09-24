@@ -1,5 +1,9 @@
 # Development-source reconciliation: migration slices — 2026-09-22
 
+Historical migration record. Later entries supersede earlier slice status;
+[current status](current-status.md) is the active plan. Do not repeat completed
+migrations based solely on an old "pending" statement below.
+
 This is the handoff for reconciling a running private development source
 into this depersonalized public candidate. It is **not** a
 directory-copy list or a claim that the current public implementation has

@@ -396,7 +396,7 @@ blocking the web server behind an open-ended provider call."
                 (coerce internal-time-units-per-second 'double-float))
              0))))
 
-(defun %dashboard-attention-report (&optional supplied-docket)
+(defun %dashboard-attention-report (&optional supplied-docket supplied-peer-inbox)
   (let* ((public (%dashboard-public-progress-report))
          (private (%dash-call-report :agent
                                      "CONSCIOUS-RECURSIVE-ATTENTION-INSPECT" 20))
@@ -406,6 +406,10 @@ blocking the web server behind an open-ended provider call."
          (docket (or supplied-docket
                      (%dash-call-report :agent
                                         "CONSCIOUS-WORK-DOCKET-INSPECT" 64)))
+         (peer-inbox (or supplied-peer-inbox
+                         (%dash-call-report :agent "CONSCIOUS-RECURSIVE-PEER-MESSAGE-INSPECT" 20)))
+         (pending-peer-count (if (hash-table-p peer-inbox)
+                                 (gethash "pending_count" peer-inbox 0) 0))
          (docket-items (and (hash-table-p docket)
                             (gethash "items" docket)))
          (eligible-work
@@ -423,6 +427,7 @@ blocking the web server behind an open-ended provider call."
                              :key (lambda (row) (gethash "status" row ""))
                              :test #'string=)))
          (state (cond ((eq t (gethash "active" public)) "operator-turn")
+                      ((plusp pending-peer-count) "peer-messages-pending")
                       (pending "private-focus")
                       (eligible-work "maintained-work-ready")
                       ((hash-table-p private) "between-cognitive-cycles")
@@ -431,6 +436,8 @@ blocking the web server behind an open-ended provider call."
            (cond ((string= state "operator-turn")
                   (format nil "Handling an operator turn: ~a"
                           (gethash "stage" public "working")))
+                 ((plusp pending-peer-count)
+                  (format nil "~d retained peer message~:p awaiting consideration." pending-peer-count))
                  (pending
                   (format nil "Pursuing private focus: ~a"
                           (gethash "question" pending "unspecified focus")))
@@ -443,6 +450,7 @@ blocking the web server behind an open-ended provider call."
     (obj "schema_version" 1 "as_of" (get-universal-time)
          "state" state "description" description
          "public_turn" public "private_attention" private
+         "peer_inbox" peer-inbox
          "work_docket" docket
          "current_focus" (or pending :null))))
 
@@ -585,9 +593,11 @@ blocking the web server behind an open-ended provider call."
 (defun %dashboard-observability-live-report ()
   "Return the process-local and durable attention state needed for first paint."
   (let ((docket (%dash-call-report :agent
-                                   "CONSCIOUS-WORK-DOCKET-INSPECT" 64)))
+                                   "CONSCIOUS-WORK-DOCKET-INSPECT" 64))
+        (peer-inbox (%dash-call-report :agent "CONSCIOUS-RECURSIVE-PEER-MESSAGE-INSPECT" 20)))
     (obj "schema_version" 1 "as_of" (get-universal-time)
-         "attention" (%dashboard-attention-report docket)
+         "attention" (%dashboard-attention-report docket peer-inbox)
+         "peer_inbox" peer-inbox
          "work_docket" docket
          "runtime_parameters" (%dashboard-runtime-parameters-report))))
 

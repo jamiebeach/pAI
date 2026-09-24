@@ -10096,9 +10096,12 @@ automatically retried, and this path does not invent peer-specific actions."
            (covered (%recursive-reconcile-activity-followers-one
                      events *conscious-recursive-mind-agent-id*))
            (events (if covered (%recursive-thread-events) events))
-           (receipt (first (%recursive-pending-private-stimuli
+           (observed (%recursive-reconcile-observed-stimuli-one
+                      events *conscious-recursive-mind-agent-id*))
+           (events (if observed (%recursive-thread-events) events))
+           (receipt (unless observed (first (%recursive-pending-private-stimuli
                             events *conscious-recursive-mind-agent-id*
-                            :maximum 1))))
+                            :maximum 1)))))
       (if receipt
           (let* ((activity (%recursive-open-stimulus-activity
                             events receipt *conscious-recursive-mind-agent-id*))
@@ -10141,9 +10144,12 @@ selection but must return one of the offered candidates."
     (let* ((events (%recursive-thread-events))
            (reconciled (%recursive-reconcile-peer-bridge-one events))
            (events (if reconciled (%recursive-thread-events) events))
-           (stimulus-p (not (null (%recursive-pending-private-stimuli
+           (observed (%recursive-reconcile-observed-stimuli-one
+                      events *conscious-recursive-mind-agent-id*))
+           (events (if observed (%recursive-thread-events) events))
+           (stimulus-p (or observed (not (null (%recursive-pending-private-stimuli
                                   events *conscious-recursive-mind-agent-id*
-                                  :maximum 1))))
+                                  :maximum 1)))))
            (candidates (if stimulus-p
                            '("stimulus" "private-work")
                            '("private-work")))

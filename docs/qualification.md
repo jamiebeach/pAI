@@ -2,6 +2,8 @@
 
 Qualification has three independent obligations: source loads offline, structural
 invariants hold, and purposeful tests execute. Passing one does not imply the others.
+The [current status](current-status.md) records the latest qualified baseline;
+this document defines the required contract rather than a deployment receipt.
 
 ```sh
 docker compose exec pai-dev sbcl --script tests/wrap-chain-completeness-tests.lisp src/
