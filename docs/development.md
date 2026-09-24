@@ -73,6 +73,14 @@ values, no provider credential, and networking disabled. It then restarts from
 the same event database and deletes only the derived database to prove that the
 projection is rebuildable from the ledger.
 
+The public config launcher permits missing-derived recovery only through ledger
+position 10,000, matching the recursive and reviewed-graph replay bounds. This
+permission does not repair an existing incomplete or stale checkpoint. The
+ordinary `pai_cli.py` live entry point still requires explicit offline rebuild
+for a missing derived database. For a larger ledger or an ordinary live instance,
+stop the instance and use the maintenance procedure in
+[first-run-qualification.md](first-run-qualification.md).
+
 The `clone-*.sh` scripts are retained as legacy development tools. They require
 explicit `PAI_REPO`, `PAI_CLONE_STATE`, and `PAI_IMAGE` values and an isolated clone
 database/network. They do not define the supported public setup.

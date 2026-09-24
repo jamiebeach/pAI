@@ -110,6 +110,9 @@ def load_instance_config(path: Path, repo: Path) -> argparse.Namespace:
     if derived_database.exists() and not event_database.exists():
         raise SystemExit("derived state exists without the authoritative event database")
     args.initialize_events = initialize_if_empty and not event_database.exists()
+    # Public first-run recovery is bounded inside the storage authority. This
+    # does not authorize stale-checkpoint repair or unbounded live replay.
+    args.small_instance_rebuild = True
 
     args.provider = _required_text(provider, "kind", 32)
     if args.provider != "local":

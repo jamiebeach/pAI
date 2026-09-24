@@ -467,7 +467,29 @@ blocking the web server behind an open-ended provider call."
     "recursive-private-briefing-completed"
     "recursive-curiosity-consolidation-opened"
     "recursive-curiosity-consolidation-completed"
-    "memory-admission-accepted" "memory-admission-rejected"))
+    "memory-admission-accepted" "memory-admission-rejected"
+    "recursive-activity-opened" "recursive-private-opportunity-selected"
+    "agent-stimulus-received" "recursive-stimulus-result"
+    "recursive-stimulus-disposition" "recursive-stimulus-retry-opened"
+    "peer-message-received" "recursive-peer-message-result"
+    "recursive-peer-message-disposition" "recursive-peer-message-retry-opened"
+    "peer-board-notification-queued" "peer-board-notification-delivered"))
+
+(defparameter *dashboard-event-query-type-limit* 32)
+
+(defun %dashboard-replay-activity-events (cutoff &key (limit 5000))
+  "Batch the activity vocabulary within the authority's type-filter bound."
+  (let* ((types (remove-duplicates *dashboard-activity-event-types* :test #'string=))
+         (events nil))
+    (loop for start from 0 below (length types) by *dashboard-event-query-type-limit*
+          do (setf events
+                   (nconc events
+                          (replay-events :from cutoff :limit limit
+                            :types (subseq types start
+                                           (min (length types)
+                                                (+ start *dashboard-event-query-type-limit*)))))))
+    (setf events (stable-sort events #'< :key (lambda (event) (gethash "id" event 0))))
+    (last events (min limit (length events)))))
 
 (defun %dashboard-event-category (type)
   (cond ((string= type "model-request") "model_requests")
@@ -476,7 +498,13 @@ blocking the web server behind an open-ended provider call."
         ((string= type "recursive-tool-result") "tool_results")
         ((string= type "user-message") "operator_messages")
         ((string= type "agent-message") "agent_messages")
-        ((or (search "curiosity" type) (search "private" type)
+        ((or (member type '("recursive-activity-opened" "agent-stimulus-received"
+                            "recursive-stimulus-result" "recursive-stimulus-disposition"
+                            "recursive-stimulus-retry-opened" "peer-message-received"
+                            "recursive-peer-message-result" "recursive-peer-message-disposition"
+                            "recursive-peer-message-retry-opened" "peer-board-notification-queued"
+                            "peer-board-notification-delivered") :test #'string=)
+             (search "curiosity" type) (search "private" type)
              (search "work-docket" type))
          "private_cognition")
         ((search "memory-admission" type) "memory_writes")
@@ -538,7 +566,9 @@ blocking the web server behind an open-ended provider call."
     "priority" "state" "next_eligible_at" "note" "work_revision"
     "focus_event_id" "register_revision" "page_revision" "decision"
     "disposition" "summary" "error_code" "reason" "observation_count"
-    "thread_count" "opened_at" "completed_at"))
+    "thread_count" "opened_at" "completed_at"
+    "sender_id" "sender_name" "peer_id" "operation_id"
+    "board_owner_id" "message_id" "reply_to" "receipt_event_id"))
 
 (defun %dashboard-event-project (event)
   (let ((payload (%dash-payload event)) (projected (obj)))
@@ -565,8 +595,7 @@ blocking the web server behind an open-ended provider call."
   "Return the independently loadable bounded activity and event history."
   (let* ((bounded-hours (min 168 (max 1 hours)))
          (cutoff (- (get-universal-time) (* 3600 bounded-hours)))
-         (events (replay-events :from cutoff :limit 5000
-                                :types *dashboard-activity-event-types*)))
+         (events (%dashboard-replay-activity-events cutoff :limit 5000)))
     (obj "schema_version" 1 "as_of" (get-universal-time)
          "activity" (%dashboard-activity-report events bounded-hours)
          "events" (coerce (mapcar #'%dashboard-event-project

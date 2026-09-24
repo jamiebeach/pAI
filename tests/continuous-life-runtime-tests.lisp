@@ -187,7 +187,11 @@
                  (obj "max_price_usd_per_million"
                       (obj "prompt" 0.2d0 "completion" 0.4d0)))))
       (check "model-capacity ambiguity bound"
-             (< (abs (- 0.41d0
+             (< (abs (- (+ 0.01d0
+                           (* (/ (min 1000000
+                                      *conversation-unbounded-outcome-completion-token-cap*)
+                                 1000000d0)
+                              0.4d0))
                         (%conversation-openrouter-unbounded-outcome-cost-bound
                          0.01d0)))
                 1d-9)))

@@ -11,6 +11,7 @@
 (defvar *sqlite-event-authority-agent-id* nil)
 (defvar *sqlite-event-authority-database* nil)
 (defvar *sqlite-event-authority-derived-database* nil)
+(defvar *sqlite-event-authority-projection-enabled-p* nil)
 
 (defun %sqlite-authority-jsonl-sources (source-jsonl)
   "Resolve the complete ordered legacy source without mutating that storage."
@@ -72,8 +73,96 @@
         (dolist (event events) (funcall visitor event))
         (values t last-id (length events)))))
 
+(defun %sqlite-authority-root-recent
+    (backend agent-id root-id event-types limit before-event-id)
+  "Use the prepared causal index to read only this root's recent children.
+Every returned event is verified by the authority lookup. Imported duplicate
+logical IDs fail closed when resolving the physical page cursor."
+  (let ((before (storage-event-position backend agent-id before-event-id))
+        (root (storage-event-position backend agent-id root-id))
+        (events nil))
+    (unless (and before root (< root before))
+      (error 'storage-conflict-error :operation :root-recent
+             :detail "root or before-event is absent, ambiguous or misordered"))
+    (let ((frontier (1- before)))
+      (loop repeat limit
+            while (plusp frontier)
+            do (multiple-value-bind (present event)
+                   (storage-root-has-event-type-p
+                    backend agent-id root-id event-types
+                    :through-position frontier :newest-p t)
+                 (unless present (return))
+                 (let ((position
+                         (storage-event-position
+                          backend agent-id (gethash "id" event))))
+                   (unless (and position (<= position frontier)
+                                (> position root))
+                     (error 'storage-conflict-error :operation :root-recent
+                            :detail "causal witness is outside root boundary"))
+                   (push event events)
+                   (setf frontier (1- position))))))
+    events))
+
+(defun %sqlite-authority-episodic-events
+    (backend agent-id &optional through-event-id)
+  "Read only exact episodic inputs at one source-bound physical frontier.
+The bounded list is still a transitional recall input, not a stored pair
+index. Refuse overflow rather than omitting older unsealed dialogue."
+  (let* ((boundary (storage-authority-boundary
+                    backend :agent-id agent-id))
+         (through-position
+           (if through-event-id
+               (let ((position (storage-event-position
+                                backend agent-id through-event-id)))
+                 (unless (and position
+                              (<= position
+                                  (gethash "through_storage_position" boundary)))
+                   (error 'storage-conflict-error
+                          :operation :episodic-context-events
+                          :detail "episodic boundary event is absent"))
+                 position)
+               (gethash "through_storage_position" boundary)))
+         (events nil) (charged 0) (selected 0) (maximum-rows 16384)
+         (maximum-bytes 33554432))
+    (multiple-value-bind (complete-p ignored count source-bytes)
+        (storage-map-events
+         backend
+         (lambda (event position)
+           (declare (ignore position))
+           (when (>= selected maximum-rows)
+             (error 'storage-unavailable-error
+                    :operation :episodic-context-events
+                    :detail "episodic input row bound exceeded"))
+           (incf charged
+                 (length (babel:string-to-octets
+                          (%storage-json event) :encoding :utf-8)))
+           (when (> charged maximum-bytes)
+             (error 'storage-unavailable-error
+                    :operation :episodic-context-events
+                    :detail "episodic input byte bound exceeded"))
+           (incf selected)
+           (push event events))
+         :agent-id agent-id :after-position 0
+         :through-position through-position
+         :event-types *event-episodic-context-types*
+         :limit (1+ maximum-rows))
+      (declare (ignore ignored))
+      (unless (and complete-p (<= count maximum-rows)
+                   (<= source-bytes maximum-bytes))
+        (error 'storage-unavailable-error
+               :operation :episodic-context-events
+               :detail "typed episodic read is incomplete or over bound")))
+    (unless (equal (gethash "source_binding" boundary)
+                   (gethash "source_binding"
+                            (storage-authority-boundary
+                             backend :agent-id agent-id)))
+      (error 'storage-conflict-error :operation :episodic-context-events
+             :detail "authority advanced during episodic read"))
+    (nreverse events)))
+
 (defun %sqlite-authority-install
-    (backend database checkpoint-backend derived-database agent-id)
+    (backend database checkpoint-backend derived-database agent-id
+     &key (projection-enabled-p t))
   (event-authority-install
    :sqlite
    :append
@@ -105,6 +194,9 @@
                         :event-type event-type))
    :projection-events
    (lambda ()
+     (unless projection-enabled-p
+       (error 'storage-unavailable-error :operation :projection-events
+              :detail "conscious projection is not installed in ledger-only mode"))
      (conscious-storage-restore-event-sequence
       backend :checkpoint-backend checkpoint-backend :agent-id agent-id))
    :recent-conversation
@@ -112,6 +204,38 @@
      (storage-recent-events
       backend '("user-message" "agent-message" "model-response") limit
       :agent-id agent-id :before-event-id before-event-id))
+   :root-recent
+   (lambda (root-id event-types limit before-event-id)
+     (%sqlite-authority-root-recent
+      backend agent-id root-id event-types limit before-event-id))
+   :episodic-events
+   (lambda (through-event-id)
+     (%sqlite-authority-episodic-events
+      backend agent-id through-event-id))
+   :activity-read
+   (lambda (reference-id through-id)
+     (storage-read-activity-context backend reference-id :agent-id agent-id
+                                    :through-event-id through-id))
+   :experience-page
+   (lambda (from to before-position limit)
+     (sqlite-experience-page backend agent-id from to before-position limit))
+   :checkpoint-load
+   (lambda (projection-name)
+     (storage-load-checkpoint checkpoint-backend projection-name
+                              :agent-id agent-id))
+   :checkpoint-publish
+   (lambda (projection-name state through-event-id through-position
+            projector-revision policy-revision)
+     (storage-publish-checkpoint
+      checkpoint-backend projection-name state :agent-id agent-id
+      :through-event-id through-event-id :through-position through-position
+      :projector-revision projector-revision
+      :policy-revision policy-revision))
+   :checkpoint-source-binding
+   (lambda (through-event-id through-position)
+     (storage-checkpoint-source-binding
+      backend :agent-id agent-id :through-event-id through-event-id
+      :through-position through-position))
    :report
    (lambda ()
      (obj "schema_version" 1 "authority" "sqlite"
@@ -131,7 +255,8 @@
         *sqlite-event-authority-checkpoint-backend* checkpoint-backend
         *sqlite-event-authority-agent-id* agent-id
         *sqlite-event-authority-database* database
-        *sqlite-event-authority-derived-database* derived-database)
+        *sqlite-event-authority-derived-database* derived-database
+        *sqlite-event-authority-projection-enabled-p* projection-enabled-p)
   backend)
 
 (defun %sqlite-authority-prepare-report
@@ -159,7 +284,7 @@
            (storage-head-position backend :agent-id agent-id)))))
 
 (defun %sqlite-authority-copy-legacy-checkpoint
-    (event-backend checkpoint-backend agent-id)
+    (event-backend checkpoint-backend agent-id rebuild-stale-checkpoint-p)
   (when (not (eq event-backend checkpoint-backend))
     (let ((target
             (storage-load-checkpoint
@@ -177,6 +302,9 @@
                      (not (string=
                            *conscious-storage-projector-revision*
                            (gethash "projector_revision" target "")))))
+        (unless rebuild-stale-checkpoint-p
+          (error 'storage-conflict-error :operation :authority-prepare
+                 :detail "checkpoint relocation requires explicit rebuild authority"))
         (conscious-storage-build-checkpoint
          event-backend :checkpoint-backend checkpoint-backend
          :agent-id agent-id)))))
@@ -184,15 +312,24 @@
 (defun sqlite-event-authority-prepare
     (database source-jsonl
      &key derived-database (agent-id "default") migrate-p initialize-p
-       rebuild-stale-checkpoint-p)
+       rebuild-stale-checkpoint-p (restore-projection-p t)
+       (missing-derived-replay-max-head 0))
   "Open the authoritative SQLite ledger. MIGRATE-P requires non-empty legacy
-history; INITIALIZE-P explicitly creates empty history. Neither is implicit."
+history; INITIALIZE-P explicitly creates empty history. Neither is implicit.
+MISSING-DERIVED-REPLAY-MAX-HEAD permits only bounded recovery of an absent
+derived database; it never grants stale-checkpoint or migration repair."
   (when *event-authority-port*
     (error 'storage-conflict-error :operation :authority-prepare
            :detail "an event authority is already installed"))
   (when (and migrate-p initialize-p)
     (error 'storage-conflict-error :operation :authority-prepare
            :detail "migration and empty initialization are mutually exclusive"))
+  (unless (member restore-projection-p '(t nil))
+    (error 'storage-error :operation :authority-prepare
+           :detail "restore-projection-p must be boolean"))
+  (unless (typep missing-derived-replay-max-head '(integer 0 *))
+    (error 'storage-error :operation :authority-prepare
+           :detail "missing-derived-replay-max-head must be a nonnegative integer"))
   (let* ((database (pathname database))
          (new-p (not (probe-file database)))
          (backend (make-sqlite-storage database))
@@ -203,15 +340,83 @@ history; INITIALIZE-P explicitly creates empty history. Neither is implicit."
          ;; migration and must retain the stricter resume contract.
          (derived-new-p (and derived-database
                              (not (probe-file derived-database))))
+         (bounded-rebuild-p
+           (and derived-new-p (plusp missing-derived-replay-max-head)
+                (<= (storage-head-position backend :agent-id agent-id)
+                    missing-derived-replay-max-head)))
          (checkpoint-backend
-           (if derived-database
-               (make-sqlite-derived-storage derived-database)
-               backend))
+           (progn
+             ;; Refuse before creating an empty derived database. Otherwise a
+             ;; later explicit repair mistakes this failed normal start for
+             ;; an interrupted migration and cannot use the rebuild path.
+             (when (and derived-new-p (not rebuild-stale-checkpoint-p)
+                        (not bounded-rebuild-p)
+                        (not migrate-p) (not initialize-p)
+                        (plusp (storage-head-position backend :agent-id agent-id)))
+               (storage-close backend)
+               (error 'storage-conflict-error :operation :authority-prepare
+                      :detail "derived database is absent; explicit offline rebuild is required"))
+             (if derived-database
+                 (make-sqlite-derived-storage derived-database)
+                 backend)))
          (sources (%sqlite-authority-jsonl-sources source-jsonl)))
     (handler-case
         (progn
+          (unless restore-projection-p
+            (let ((head (storage-head-position backend :agent-id agent-id))
+                  (status nil) (import-report nil) (audit-report nil))
+              (cond
+                ((zerop head)
+                 (cond
+                   (migrate-p
+                    (unless sources
+                      (error 'storage-conflict-error
+                             :operation :authority-prepare
+                             :detail "event migration resolved no legacy source"))
+                    (setf import-report
+                          (sqlite-import-jsonl backend sources
+                                               :legacy-agent-id agent-id))
+                    (when (zerop (gethash "event_count" import-report))
+                      (error 'storage-conflict-error
+                             :operation :authority-prepare
+                             :detail "migration source contained zero events"))
+                    (setf audit-report
+                          (sqlite-audit-jsonl-import backend sources
+                                                     :legacy-agent-id agent-id)
+                          status "migrated-ledger-only"))
+                   (initialize-p
+                    (when sources
+                      (error 'storage-conflict-error
+                             :operation :authority-prepare
+                             :detail "legacy history exists; refuse empty initialization"))
+                    (setf status "initialized-empty-ledger-only"))
+                   (t
+                    (error 'storage-conflict-error
+                           :operation :authority-prepare
+                           :detail "empty authority requires explicit migration or initialization"))))
+                (initialize-p
+                 (error 'storage-conflict-error :operation :authority-prepare
+                        :detail "event authority is already initialized"))
+                (migrate-p
+                 (unless sources
+                   (error 'storage-conflict-error
+                          :operation :authority-prepare
+                          :detail "migration resume resolved no legacy source"))
+                 (setf audit-report
+                       (sqlite-audit-jsonl-import backend sources
+                                                  :legacy-agent-id agent-id)
+                       status "migration-resumed-ledger-only"))
+                (t (setf status "opened-ledger-only")))
+              (%sqlite-authority-install
+               backend database checkpoint-backend derived-database agent-id
+               :projection-enabled-p nil)
+              (return-from sqlite-event-authority-prepare
+                (values backend
+                        (%sqlite-authority-prepare-report
+                         status backend agent-id sources import-report
+                         audit-report nil)))))
           (%sqlite-authority-copy-legacy-checkpoint
-           backend checkpoint-backend agent-id)
+           backend checkpoint-backend agent-id rebuild-stale-checkpoint-p)
           (let* ((checkpoint
                  (storage-load-checkpoint
                   checkpoint-backend *conscious-storage-checkpoint-name*
@@ -254,11 +459,12 @@ history; INITIALIZE-P explicitly creates empty history. Neither is implicit."
                     backend :checkpoint-backend checkpoint-backend
                     :agent-id agent-id)))
             (t
-             (if (and derived-new-p rebuild-stale-checkpoint-p
+             (if (and derived-new-p
+                      (or rebuild-stale-checkpoint-p bounded-rebuild-p)
                       (not migrate-p) (not initialize-p))
                  ;; The event ledger is authoritative and a deliberately
                  ;; absent derived database carries no state to reconcile.
-                 ;; Build it from the complete ledger under explicit rebuild
+                 ;; Build under explicit full or bounded missing-state rebuild
                  ;; authority. Existing checkpoint-free databases still fail
                  ;; closed below because they may be interrupted migrations.
                  (setf status "projection-rebuilt-from-ledger"
@@ -328,7 +534,32 @@ history; INITIALIZE-P explicitly creates empty history. Neither is implicit."
   "Refresh from the verified bounded prefix plus tail without full replay."
   (unless (sqlite-event-authority-active-p)
     (error "SQLite event authority is not active"))
+  (unless *sqlite-event-authority-projection-enabled-p*
+    (error 'storage-unavailable-error :operation :projection-checkpoint
+           :detail "conscious projection is not installed in ledger-only mode"))
   (conscious-storage-refresh-checkpoint
    *sqlite-event-authority-backend*
    :checkpoint-backend *sqlite-event-authority-checkpoint-backend*
    :agent-id *sqlite-event-authority-agent-id*))
+
+(register-layer recursive-root-failure-receipt sqlite-indexed-root
+  :order 100
+  :function
+  (lambda (next root-event-id)
+    (if (and (sqlite-event-authority-active-p)
+             (storage-activity-index-ready-p
+              *sqlite-event-authority-backend*))
+        (let ((boundary
+                (storage-authority-boundary
+                 *sqlite-event-authority-backend*
+                 :agent-id *sqlite-event-authority-agent-id*)))
+          ;; An indexed failure is never treated as an absent receipt. The
+          ;; legacy reader is only for an authority without the explicit
+          ;; maintenance index (or the non-SQLite harness).
+          (nth-value
+           1
+           (storage-root-has-event-type-p
+            *sqlite-event-authority-backend*
+            *sqlite-event-authority-agent-id* root-event-id
+            "recursive-root-failed" :source-boundary boundary :newest-p t)))
+        (funcall next root-event-id))))

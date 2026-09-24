@@ -96,6 +96,34 @@
   (cs-check "identical input rebuilds identical state"
             (string= (shasht:write-json a nil) (shasht:write-json b nil))))
 
+(let* ((events (list (cs-event "user-message" :id 1 :timestamp 1000)
+                     (cs-event "pulse-committed" :id 2 :timestamp 1001
+                               :payload (obj "pulse_sequence" 3))))
+       (context (make-projection-context :now 2000))
+       (inbox (inbox-project events :context context))
+       (from-events (conscious-state-project events :context context))
+       (from-indexed-inputs
+         (conscious-state-project nil :context context
+                                  :inbox-projection inbox
+                                  :committed-pulse-sequence 3)))
+  (cs-check "conscious policy projection accepts complete indexed inputs without events"
+            (string= (shasht:write-json from-events nil)
+                     (shasht:write-json from-indexed-inputs nil)))
+  (cs-check "conscious indexed inputs reject a partial source"
+            (handler-case
+                (progn (conscious-state-project nil :context context
+                                               :inbox-projection inbox)
+                       nil)
+              (error () t)))
+  (cs-check "conscious indexed inputs reject a mismatched policy context"
+            (handler-case
+                (progn
+                  (conscious-state-project
+                   nil :context (make-projection-context :now 2001)
+                   :inbox-projection inbox :committed-pulse-sequence 3)
+                  nil)
+              (error () t))))
+
 ;; Codex review: the old version of this projected a prefix and DISCARDED the
 ;; result, so it only re-ran the same computation and proved nothing about
 ;; checkpoint parity. Both directions are now asserted.

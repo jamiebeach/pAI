@@ -364,6 +364,15 @@ def tool_runtime_environment(
         "PAI_WEB_ENABLED", "PAI_WEB_ADDRESS", "PAI_WEB_PORT",
         "PAI_WEB_FILE_MUTATION",
         "PAI_LISP_EVAL_REVIEW_LOG",
+        # Fleet peer-to-peer (docs/FLEET_DESIGN.md). Confirmed live: without
+        # these, every /fleet-request and /fleet-approve failed with
+        # "PAI_FLEET_OWN_ADDRESS must be set" on any instance launched with
+        # --recursive-tools (this allowlist applies unconditionally once
+        # recursive tools are on, regardless of whether fleet is even used)
+        # -- the value reached this process's own environment via .env and
+        # compose.yaml just fine, and was then silently dropped here before
+        # the Lisp subprocess ever saw it.
+        "PAI_FLEET_OWN_ADDRESS", "PAI_FLEET_OWN_NAME",
     }
     restricted = {
         key: value for key, value in environment.items()
@@ -1460,6 +1469,10 @@ def run(args: argparse.Namespace) -> int:
             "PAI_EVENT_STORAGE_MIGRATE": "1" if args.migrate_events else "0",
             "PAI_EVENT_STORAGE_INITIALIZE": (
                 "1" if args.initialize_events else "0"
+            ),
+            # Do not inherit recovery authority into the ordinary live CLI.
+            "PAI_SMALL_INSTANCE_REBUILD": (
+                "1" if getattr(args, "small_instance_rebuild", False) else "0"
             ),
             "PAI_MEMORY_STORAGE_MIGRATE": "1" if args.migrate_memory else "0",
             "PAI_MIGRATION_ONLY": "1" if args.migration_only else "0",

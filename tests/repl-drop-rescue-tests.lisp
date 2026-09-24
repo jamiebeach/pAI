@@ -28,7 +28,7 @@
 (let* ((root
          (merge-pathnames
           (format nil "pai-repl-rescue-~a/" (random 1000000000))
-          (uiop:temporary-directory)))
+          (test-state-dir)))
        (*repl-drop-dir* root)
        (ordinary (merge-pathnames "ordinary.lisp" root))
        (ordinary-result
@@ -40,6 +40,9 @@
        (cancel (merge-pathnames "cancel-active-turn-fixture.request" root))
        (cancel-result (make-pathname :type "result" :defaults cancel))
        (cancel-done (make-pathname :type "done" :defaults cancel)))
+  (dolist (candidate (list ordinary ordinary-result ordinary-done
+                           cancel cancel-result cancel-done))
+    (when (probe-file candidate) (delete-file candidate)))
   (ensure-directories-exist ordinary)
   (repl-rescue-write ordinary "(+ 1 2)")
   (setf *repl-rescue-cancel-reason* nil)

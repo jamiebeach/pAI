@@ -80,7 +80,7 @@
 
 (setf *r0c3-events* nil)
 
-(let* ((root #P"/tmp/r0c3-stateful-projections/")
+(let* ((root (merge-pathnames "r0c3-stateful-projections/" (test-state-dir)))
        (modulators (merge-pathnames "modulators.json" root))
        (drives (merge-pathnames "drives.json" root))
        (contact (merge-pathnames "contact-log.json" root))
@@ -96,6 +96,8 @@
            ("schedules" . ,schedules)
            ("scheduled-context" . ,scheduled-context)
            ("public-outbound-audit" . ,outbound))))
+  (let ((ledger (merge-pathnames "roundtrip-events.jsonl" root)))
+    (when (probe-file ledger) (delete-file ledger)))
   (ensure-directories-exist modulators)
   (let ((*modulators-file* modulators)
         (*modulators*

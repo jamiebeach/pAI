@@ -1472,7 +1472,9 @@
        (*conscious-conversation-provider-spent-usd* 0d0)
        (*conscious-conversation-provider-budget-uncertain-p* nil)
        (*conscious-conversation-private-provider-call-p* t)
-       (*conscious-conversation-private-provider-min-interval-seconds* 1)
+       ;; Runtime pacing uses whole-second universal time. Two seconds here
+       ;; still proves a wall-clock wait across a second rollover.
+       (*conscious-conversation-private-provider-min-interval-seconds* 2)
        (*conscious-conversation-last-private-provider-call-at* nil)
        (forged-response
          (obj "choices"
@@ -1846,6 +1848,41 @@
                (string= (shasht:write-json first nil)
                         (shasht:write-json second nil))))
 
+  (let* ((metadata (obj "source" "q4.5-conversation"
+                        "persona_id" "fixture-a"))
+         (question (concatenate 'string "question-start "
+                                (make-string 180 :initial-element #\q)
+                                " question-end"))
+         (answer (concatenate 'string "answer-start "
+                              (make-string 180 :initial-element #\a)
+                              " answer-end"))
+         (events (list
+                  (obj "id" 10 "type" "user-message" "agent_id" "q45-dev"
+                       "payload" (obj "text" "older exchange"
+                                      "metadata" metadata))
+                  (obj "id" 11 "type" "agent-message" "agent_id" "q45-dev"
+                       "caused_by" 10
+                       "payload" (obj "text" "older reply"
+                                      "metadata" metadata))
+                  (obj "id" 12 "type" "user-message" "agent_id" "q45-dev"
+                       "payload" (obj "text" question "metadata" metadata))
+                  (obj "id" 13 "type" "agent-message" "agent_id" "q45-dev"
+                       "caused_by" 12
+                       "payload" (obj "text" answer "metadata" metadata))))
+         (selection (multiple-value-list
+                     (conscious-conversation-history
+                      events "q45-dev" :max-events 4
+                      :character-budget 100 :event-character-limit 32
+                      :token-budget 25 :minimum-recent-events 1)))
+         (history (first selection))
+         (report (second selection)))
+    (q45-check "newest exchange retains complete question and answer beyond nominal budget"
+               (and (= 2 (length history))
+                    (search "question-end" (gethash "content" (aref history 0)))
+                    (search "answer-end" (gethash "content" (aref history 1)))
+                    (= 2 (gethash "required_recent_record_count" report))
+                    (zerop (gethash "truncated_record_count" report)))))
+
   (let* ((events
            (list
             (obj "id" 4 "type" "user-message" "agent_id" "q45-dev"
@@ -2128,7 +2165,8 @@
                         (integerp (gethash "rendered_characters" history))
                         (integerp (gethash "estimated_tokens" history))
                         (integerp (gethash "omitted_record_count" history))
-                        (= 9 (hash-table-count history))
+                        (integerp (gethash "required_recent_record_count" history))
+                        (zerop (gethash "truncated_record_count" history))
                         (null (search "thoughtful cartographer"
                                       (shasht:write-json history nil))))))
       (q45-check "turn result exposes bounded phase timing diagnostics"

@@ -3,7 +3,10 @@
 
 (dolist (type '("context-graph-identity-opened" "context-graph-identity-phase"
                 "context-graph-identity-completed" "context-graph-identity-failed"))
-  (assert (member type *conscious-recursive-thread-event-types* :test #'equal)))
+  (assert (member type *conscious-context-graph-journal-event-types*
+                  :test #'equal))
+  (assert (not (member type *conscious-recursive-thread-event-types*
+                       :test #'equal))))
 
 (assert (not (knowledge-graph-ontology-kind-p "attribute_value")))
 (assert (knowledge-graph-ontology-kind-p
@@ -17,6 +20,184 @@
 (assert (not (knowledge-graph-ontology-signature-valid-p
               "has_age" "attribute_value" "person"
               *knowledge-graph-family-ontology-revision*)))
+
+;; The checkpoint is metadata; graph and owner values are independently
+;; integrity-checked rows. Settled source packets do not survive restoration.
+(let* ((path (merge-pathnames "reviewed-context-graph.sqlite3" (test-state-dir)))
+       (backend nil) (agent-id "row-agent") (persona-id "row-persona")
+       (runtime (pai.context-graph:context-graph-runtime-create
+                 (%ccg-ontology) (%ccg-runtime-ontology-revision)
+                 agent-id persona-id))
+       (graph (pai.context-graph::context-graph-runtime-graph runtime))
+       (owner (%ccg-create-owner graph agent-id persona-id))
+       (opening
+         (obj "id" 10 "agent_id" agent-id
+              "type" "context-graph-identity-opened" "timestamp" 10
+              "caused_by" 3 "payload"
+              (obj "persona_id" persona-id
+                   "generation" *conscious-context-graph-owner-generation*
+                   "record_json"
+                   (pai.context-graph:context-graph-runtime-json
+                    (obj "episode_event_id" 3 "batch_index" 0
+                         "observed_at" 10
+                         "source_context"
+                         (obj "private" (make-string 10000 :initial-element #\x))
+                         "ontology_revision" (%ccg-runtime-ontology-revision)
+                         "formation_protocol" *conscious-context-graph-formation-protocol*
+                         "fact_input_revision" "selected-signatures-v4"
+                         "budget_microusd" 1000 "request_ceiling_microusd" 500
+                         "attempt" 1 "retry_of" :null)))))
+       (terminal
+         (obj "id" 11 "agent_id" agent-id
+              "type" "context-graph-identity-failed" "timestamp" 11
+              "caused_by" 10 "payload"
+              (obj "persona_id" persona-id
+                   "generation" *conscious-context-graph-owner-generation*
+                   "record_json"
+                   (pai.context-graph:context-graph-runtime-json
+                    (obj "reason" "provider" "failure_class" "provider"
+                         "retryable" :false "attempt" 1 "failed_at" 11
+                         "next_retry_at" :null))))))
+  (labels ((clean ()
+             (dolist (candidate
+                      (list path
+                            (pathname (concatenate 'string (namestring path) "-wal"))
+                            (pathname (concatenate 'string (namestring path) "-shm"))))
+               (when (probe-file candidate) (delete-file candidate)))))
+    (clean)
+    (unwind-protect
+         (progn
+           (setf backend (make-sqlite-derived-storage path)
+                 (gethash 10 (pai.context-graph::cgi-owner-opens owner)) opening
+                 (gethash 10 (pai.context-graph::cgi-owner-terminals owner)) terminal
+                 (gethash '(3 0) (pai.context-graph::cgi-owner-tasks owner)) 10
+                 (gethash '(10 "facts") (pai.context-graph::cgi-owner-phases owner))
+                 (obj "outcome" "response" "charged_microusd" 17)
+                 (pai.context-graph::cgi-owner-last-id owner) 11
+                 (gethash "entity:fixture"
+                          (pai.context-graph::context-graph-entities graph))
+                 (obj "entity_id" "entity:fixture" "node_id" "entity:fixture"
+                      "kind" "concept" "label" "Fixture"
+                      "aliases" #("Fixture Alias")
+                      "classifications" #() "participant_role" :null
+                      "status" "current")
+                 (gethash "entity:fixture"
+                          (pai.context-graph::context-graph-entity-adjacency
+                           graph))
+                 #("fact:fixture"))
+           (let ((first
+                   (reviewed-context-graph-persist
+                    backend graph owner :through-event-id 20
+                    :through-position 30 :event-storage-id "fixture-ledger"
+                    :boundary-hash "fixture-binding")))
+             (assert (string= "persisted" (gethash "status" first)))
+             (assert (plusp (gethash "written_record_count" first)))
+             (assert (= 2 (gethash "alias_count" first)))
+             (assert (= 2 (gethash "written_alias_count" first)))
+             (assert (= 1 (gethash "adjacency_count" first)))
+             (assert (= 1 (gethash "written_adjacency_count" first))))
+           ;; Advancing only the source watermark updates the tiny checkpoint;
+           ;; identical graph/index rows perform no database writes.
+           (let ((unchanged
+                   (reviewed-context-graph-persist
+                    backend graph owner :through-event-id 21
+                    :through-position 31 :event-storage-id "fixture-ledger"
+                    :boundary-hash "fixture-binding-2")))
+             (assert (zerop (gethash "written_record_count" unchanged)))
+             (assert (zerop (gethash "deleted_record_count" unchanged)))
+             (assert (zerop (gethash "written_alias_count" unchanged)))
+             (assert (zerop (gethash "deleted_alias_count" unchanged)))
+             (assert (zerop (gethash "written_adjacency_count" unchanged)))
+             (assert (zerop (gethash "deleted_adjacency_count" unchanged))))
+           ;; A changed entity and adjacency update only their rows and index
+           ;; set differences; a removed owner row is deleted explicitly.
+           (setf (gethash "aliases"
+                          (gethash
+                           "entity:fixture"
+                           (pai.context-graph::context-graph-entities graph)))
+                 #("Changed Alias")
+                 (gethash "entity:fixture"
+                          (pai.context-graph::context-graph-entity-adjacency
+                           graph))
+                 #())
+           (remhash '(3 0) (pai.context-graph::cgi-owner-tasks owner))
+           (let ((changed
+                   (reviewed-context-graph-persist
+                    backend graph owner :through-event-id 22
+                    :through-position 32 :event-storage-id "fixture-ledger"
+                    :boundary-hash "fixture-binding-3")))
+             (assert (= 2 (gethash "written_record_count" changed)))
+             (assert (= 1 (gethash "deleted_record_count" changed)))
+             (assert (= 1 (gethash "written_alias_count" changed)))
+             (assert (= 1 (gethash "deleted_alias_count" changed)))
+             (assert (zerop (gethash "written_adjacency_count" changed)))
+             (assert (= 1 (gethash "deleted_adjacency_count" changed))))
+           (multiple-value-bind (restored restored-owner checkpoint exposure)
+               (reviewed-context-graph-restore
+                backend agent-id persona-id "fixture-ledger"
+                "fixture-binding-3")
+             (assert restored)
+             (assert (= 32 (gethash "through_storage_position" checkpoint)))
+             (assert (= 17 exposure))
+             (assert (gethash "entity:fixture"
+                              (pai.context-graph::context-graph-entities restored)))
+             (assert
+              (not (nth-value
+                    1 (gethash
+                       "source_context"
+                       (pai.context-graph::%cgro-record
+                        (gethash 10 (pai.context-graph::cgi-owner-opens
+                                     restored-owner)))))))))
+      (when backend (ignore-errors (storage-close backend)))
+      (clean))))
+
+
+;; No graph journals is a valid projection, not an incomplete rebuild. Exercise
+;; the actual authority and recursive cache, and prove warm/cold reads reuse it.
+(let* ((database (merge-pathnames "empty-graph-events.sqlite3" (test-state-dir)))
+       (derived (merge-pathnames "empty-graph-derived.sqlite3" (test-state-dir)))
+       (*agent-id* "empty-graph-agent")
+       (persona-id "empty-graph-persona")
+       (*conscious-context-graph-runtime* nil)
+       (*conscious-context-graph-formation-owner* nil)
+       (*conscious-context-graph-runtime-key* nil)
+       (*conscious-context-graph-journal-position* nil)
+       (*conscious-context-graph-maintenance-replay-p* t)
+       (*conscious-recursive-thread-events-cache-key* nil)
+       (original-persist (symbol-function 'reviewed-context-graph-persist))
+       (writes 0))
+  (unwind-protect
+       (progn
+         (sqlite-event-authority-prepare
+          database nil :derived-database derived :agent-id *agent-id*
+          :initialize-p t)
+         (log-event "heap-health" (obj "status" "synthetic-empty-graph"))
+         (setf (symbol-function 'reviewed-context-graph-persist)
+               (lambda (&rest arguments)
+                 (incf writes)
+                 (apply original-persist arguments)))
+         (let* ((backend *sqlite-event-authority-backend*)
+                (checkpoint-backend *sqlite-event-authority-checkpoint-backend*)
+                (head (storage-head-position backend :agent-id *agent-id*)))
+           (%ccg-sync backend *agent-id* persona-id checkpoint-backend)
+           (let ((checkpoint
+                   (storage-load-checkpoint
+                    checkpoint-backend *reviewed-context-graph-projection-name*
+                    :agent-id *agent-id*)))
+             (assert checkpoint)
+             (assert (= head (gethash "through_storage_position" checkpoint))))
+           (assert (= 1 writes))
+           (%ccg-sync backend *agent-id* persona-id checkpoint-backend)
+           (assert (= 1 writes))
+           ;; A fresh generation must restore the source-bound empty graph.
+           (setf *conscious-context-graph-runtime-key* nil
+                 *conscious-context-graph-runtime* nil
+                 *conscious-context-graph-formation-owner* nil)
+           (%ccg-sync backend *agent-id* persona-id checkpoint-backend)
+           (assert (= 1 writes))
+           (assert (= head (storage-head-position backend :agent-id *agent-id*)))))
+    (setf (symbol-function 'reviewed-context-graph-persist) original-persist)
+    (when *event-authority-port* (event-authority-clear))))
 
 (let ((profile-path (merge-pathnames "graph-provider-profiles.json"
                                      (test-state-dir))))
@@ -416,9 +597,10 @@
       (unwind-protect
            (progn
              (setf (symbol-function '%ccg-sync)
-                     (lambda (event-backend selected-agent selected-persona)
+                     (lambda (event-backend selected-agent selected-persona
+                              &optional derived-backend)
                        (declare (ignore event-backend selected-agent
-                                        selected-persona))
+                                        selected-persona derived-backend))
                        (values runtime #'source
                                (list (gethash 3 index) (gethash 12 index))
                                owner)))
@@ -465,8 +647,10 @@
       (unwind-protect
            (progn
              (setf (symbol-function '%ccg-sync)
-                     (lambda (event-backend selected-agent selected-persona)
-                       (declare (ignore event-backend selected-agent selected-persona))
+                     (lambda (event-backend selected-agent selected-persona
+                              &optional derived-backend)
+                       (declare (ignore event-backend selected-agent
+                                        selected-persona derived-backend))
                        (values runtime #'source nil owner))
                    (symbol-function 'pai.context-graph::%cgi-owner-run)
                      (lambda (selected-owner source-fn append-fn call-fn opened
@@ -794,6 +978,13 @@
       ;; Fully covered lexical retrieval avoids needless embedding work.
       (let ((lexical (%ccg-retrieve runtime "cat")))
         (assert (eq :null (gethash "semantic_selection_revision" lexical))))
+      ;; Restored lifecycle openings may have no source packet; retrieval must
+      ;; skip them without treating a missing context as a hash table.
+      (setf (gethash 1000 (pai.context-graph::context-graph-runtime-opens runtime))
+            (obj "id" 1000 "payload"
+                 (obj "record_json"
+                      (pai.context-graph:context-graph-runtime-json
+                       (obj "reason" "settled-lifecycle-record")))))
       (let ((*conscious-context-graph-semantic-similarity-fn*
               (lambda (query document) (declare (ignore query document)) 0.45d0)))
         (assert (zerop (length (gethash "facts" (gethash "context"

@@ -197,9 +197,13 @@
                                                   :element-type '(unsigned-byte 8))
                             (file-length stream))
                           "node_count"
-                          (length
-                           (%sqlite-exact-memory-cache-entries
-                            (%sqlite-derived-exact-memory-cache backend)))
+                          (%with-sqlite-statement
+                              (statement (%sqlite-derived-handle backend :benchmark)
+                                         "SELECT count(*) FROM pai_memory_nodes"
+                                         :benchmark)
+                            (%sqlite-step (%sqlite-derived-handle backend :benchmark)
+                                          statement :benchmark +sqlite-row+)
+                            (%sqlite-column-int64 statement 0))
                           "embedding_ms" embedding-ms
                           "cold_semantic_ms" cold-ms
                           "cache_retained_heap_bytes"

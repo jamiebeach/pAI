@@ -565,6 +565,81 @@ caller accidentally reaching a mutation method fails at the storage boundary."
                                          :read-event))
                 (t (%sqlite-check code handle :read-event))))))))
 
+(defmethod storage-read-event-before-position
+    ((backend sqlite-storage) agent-id event-id before-position)
+  (%storage-required-string agent-id "agent-id")
+  (%storage-positive-integer event-id "event-id")
+  (%storage-positive-integer before-position "before-position")
+  (bt:with-lock-held ((%sqlite-storage-lock backend))
+    (let ((handle (%sqlite-handle backend :read-event-before-position)))
+      (%with-sqlite-statement
+          (statement handle
+                     "SELECT event_id,agent_id,partition_status,event_type,occurred_at,event_json,integrity_hash FROM pai_events INDEXED BY pai_events_agent_id_idx WHERE agent_id=?1 AND event_id=?2 AND storage_sequence<?3 ORDER BY storage_sequence DESC LIMIT 1"
+                     :read-event-before-position)
+        (%sqlite-bind-text handle statement 1 agent-id :read-event-before-position)
+        (%sqlite-bind-int64 handle statement 2 event-id :read-event-before-position)
+        (%sqlite-bind-int64 handle statement 3 before-position
+                            :read-event-before-position)
+        (let ((code (%sqlite-step-raw statement)))
+          (cond ((= code +sqlite-done+) nil)
+                ((= code +sqlite-row+)
+                 (%sqlite-verified-event (%sqlite-column-int64 statement 0)
+                                         (%sqlite-column-text statement 1)
+                                         (%sqlite-column-text statement 2)
+                                         (%sqlite-column-text statement 3)
+                                         (%sqlite-column-text statement 4)
+                                         (%sqlite-column-text statement 5)
+                                         (%sqlite-column-text statement 6)
+                                         :read-event-before-position))
+                (t (%sqlite-check code handle :read-event-before-position))))))))
+
+(defmethod storage-event-position
+    ((backend sqlite-storage) agent-id event-id)
+  (%storage-required-string agent-id "agent-id")
+  (%storage-positive-integer event-id "event-id")
+  (bt:with-lock-held ((%sqlite-storage-lock backend))
+    (let ((handle (%sqlite-handle backend :event-position)))
+      (%with-sqlite-statement
+          (statement handle
+                     "SELECT storage_sequence FROM pai_events INDEXED BY pai_events_agent_id_idx WHERE agent_id=?1 AND event_id=?2 ORDER BY storage_sequence ASC LIMIT 2"
+                     :event-position)
+        (%sqlite-bind-text handle statement 1 agent-id :event-position)
+        (%sqlite-bind-int64 handle statement 2 event-id :event-position)
+        (let ((code (%sqlite-step-raw statement)))
+          (cond ((= code +sqlite-done+) nil)
+                ((= code +sqlite-row+)
+                 (let ((position (%sqlite-column-int64 statement 0))
+                       (next (%sqlite-step-raw statement)))
+                   (unless (= next +sqlite-done+)
+                     (if (= next +sqlite-row+)
+                         (error 'storage-conflict-error
+                                :operation :event-position
+                                :detail "logical event ID is not unique")
+                         (%sqlite-check next handle :event-position)))
+                   position))
+                (t (%sqlite-check code handle :event-position))))))))
+
+(defmethod storage-max-event-id-through-position
+    ((backend sqlite-storage) agent-id through-position)
+  (%storage-required-string agent-id "agent-id")
+  (%storage-positive-integer through-position "through-position"
+                             :zero-allowed t)
+  (bt:with-lock-held ((%sqlite-storage-lock backend))
+    (let ((handle (%sqlite-handle backend :prefix-max-event-id)))
+      (when (> through-position
+               (%sqlite-head-position-unlocked handle agent-id))
+        (error 'storage-conflict-error :operation :prefix-max-event-id
+               :detail "requested physical prefix exceeds authority head"))
+      (%with-sqlite-statement
+          (statement handle
+                     "SELECT COALESCE(MAX(event_id),0) FROM pai_events INDEXED BY pai_events_agent_seq_idx WHERE agent_id=?1 AND storage_sequence<=?2"
+                     :prefix-max-event-id)
+        (%sqlite-bind-text handle statement 1 agent-id :prefix-max-event-id)
+        (%sqlite-bind-int64 handle statement 2 through-position
+                            :prefix-max-event-id)
+        (%sqlite-step handle statement :prefix-max-event-id +sqlite-row+)
+        (%sqlite-column-int64 statement 0)))))
+
 (defmethod storage-scan-events
     ((backend sqlite-storage) &key (agent-id "default") (after-id 0)
                               event-type (limit 1000))
@@ -963,6 +1038,45 @@ read lock is held."
                           (%sqlite-check code handle :recent-events)))
           rows)))))
 
+(defun sqlite-experience-page (backend agent-id from to before-position limit)
+  "Bounded newest-first experience page, using physical position for stable paging."
+  (%storage-required-string agent-id "agent-id")
+  (unless (and (integerp from) (integerp to) (<= 0 from to)
+               (integerp limit) (<= 1 limit 20)
+               (or (null before-position)
+                   (and (integerp before-position) (plusp before-position))))
+    (error "Invalid experience page bounds"))
+  (bt:with-lock-held ((%sqlite-storage-lock backend))
+    (let* ((handle (%sqlite-handle backend :experience-page))
+           (sql "SELECT event_id,agent_id,partition_status,event_type,occurred_at,event_json,integrity_hash,storage_sequence FROM pai_events WHERE agent_id=?1 AND occurred_at>=?2 AND occurred_at<=?3 AND storage_sequence<?4 AND event_type IN ('user-message','agent-message','peer-message-received','recursive-tool-result','recursive-curiosity-result','recursive-curiosity-incorporation-completed','recursive-curiosity-briefing-completed','recursive-peer-message-result','recursive-stimulus-result') ORDER BY storage_sequence DESC LIMIT ?5")
+           (rows nil) (positions nil))
+      (%with-sqlite-statement (statement handle sql :experience-page)
+        (%sqlite-bind-text handle statement 1 agent-id :experience-page)
+        (%sqlite-bind-text handle statement 2
+                           (%sqlite-universal-time-iso8601 from "from") :experience-page)
+        (%sqlite-bind-text handle statement 3
+                           (%sqlite-universal-time-iso8601 to "to") :experience-page)
+        (%sqlite-bind-int64 handle statement 4
+                            (or before-position most-positive-fixnum) :experience-page)
+        (%sqlite-bind-int64 handle statement 5 (1+ limit) :experience-page)
+        (loop for code = (%sqlite-step-raw statement)
+              while (= code +sqlite-row+)
+              do (push (%sqlite-verified-event
+                        (%sqlite-column-int64 statement 0)
+                        (%sqlite-column-text statement 1)
+                        (%sqlite-column-text statement 2)
+                        (%sqlite-column-text statement 3)
+                        (%sqlite-column-text statement 4)
+                        (%sqlite-column-text statement 5)
+                        (%sqlite-column-text statement 6) :experience-page) rows)
+                 (push (%sqlite-column-int64 statement 7) positions)
+              finally (unless (= code +sqlite-done+)
+                        (%sqlite-check code handle :experience-page))))
+      (setf rows (nreverse rows) positions (nreverse positions))
+      (let ((more (> (length rows) limit)))
+        (values (subseq rows 0 (min limit (length rows)))
+                (and more (nth (1- limit) positions)))))))
+
 (defmethod storage-publish-checkpoint
     ((backend sqlite-storage) projection-name state
      &key (agent-id "default") through-event-id
@@ -1018,10 +1132,9 @@ read lock is held."
            (error 'storage-conflict-error :operation :publish-checkpoint
                   :detail "checkpoint storage position would move backwards")))
        (let* ((state-json (%storage-json state))
-              (hash (%storage-sha256
-                     (%storage-checkpoint-integrity-input
+              (hash (%storage-checkpoint-integrity-sha256
                       projection-name agent-id through-event-id through-position
-                      projector-revision policy-revision state-json))))
+                      projector-revision policy-revision state-json)))
          (%with-sqlite-statement
              (statement handle
                         "INSERT INTO pai_projection_checkpoints(projection_name,agent_id,through_event_id,through_storage_position,projector_revision,policy_revision,state_json,integrity_hash) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(projection_name,agent_id) DO UPDATE SET through_event_id=excluded.through_event_id,through_storage_position=excluded.through_storage_position,projector_revision=excluded.projector_revision,policy_revision=excluded.policy_revision,state_json=excluded.state_json,integrity_hash=excluded.integrity_hash,created_at=CURRENT_TIMESTAMP"
@@ -1065,10 +1178,9 @@ read lock is held."
                     (state-json (%sqlite-column-text statement 4))
                     (stored-hash (%sqlite-column-text statement 5))
                     (actual-hash
-                      (%storage-sha256
-                       (%storage-checkpoint-integrity-input
+                      (%storage-checkpoint-integrity-sha256
                         projection-name agent-id through position projector policy
-                        state-json))))
+                        state-json)))
                (unless (string= stored-hash actual-hash)
                  (error 'storage-integrity-error :operation :load-checkpoint
                         :detail "checkpoint integrity hash mismatch"))

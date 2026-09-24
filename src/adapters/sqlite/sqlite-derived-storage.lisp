@@ -18,31 +18,7 @@
                          :accessor %sqlite-derived-verified-memory-seal)
    (verified-memory-data-version
     :initform nil :accessor %sqlite-derived-verified-memory-data-version)
-   (exact-memory-cache :initform nil
-                       :accessor %sqlite-derived-exact-memory-cache)
-   (exact-memory-cache-builds :initform 0
-                              :accessor %sqlite-derived-exact-cache-builds)
-   (exact-memory-cache-hits :initform 0
-                            :accessor %sqlite-derived-exact-cache-hits)
-   (exact-memory-cache-incremental-advances
-    :initform 0 :accessor %sqlite-derived-exact-cache-incremental-advances)
-   (exact-memory-cache-incremental-fallbacks
-    :initform 0 :accessor %sqlite-derived-exact-cache-incremental-fallbacks)
    (closed-p :initform nil :accessor %sqlite-derived-closed-p)))
-
-(defstruct (%sqlite-exact-cache-entry
-             (:constructor %make-sqlite-exact-cache-entry
-                 (id row retrieval-vector turn-id)))
-  id row retrieval-vector turn-id)
-
-(defstruct (%sqlite-exact-memory-cache
-             (:constructor %make-sqlite-exact-memory-cache
-                 (seal data-version projection-position entries turn-index
-                  id-index)))
-  seal data-version projection-position entries turn-index id-index)
-
-(defun %sqlite-derived-clear-exact-cache (backend)
-  (setf (%sqlite-derived-exact-memory-cache backend) nil))
 
 (defun %sqlite-derived-handle (backend operation)
   (when (%sqlite-derived-closed-p backend)
@@ -135,7 +111,9 @@
          (ftype (function (t) t) %sqlite-memory-projection-unlocked))
 
 (defun %sqlite-derived-ensure-memory-verified (backend handle operation)
-  (let* ((data-version (%sqlite-derived-data-version handle operation))
+  (let* ((previous-data-version
+           (%sqlite-derived-verified-memory-data-version backend))
+         (data-version (%sqlite-derived-data-version handle operation))
          (current-seal (%sqlite-derived-current-memory-seal handle operation))
          (verified-p
            (and (stringp current-seal)
@@ -148,10 +126,20 @@
              (projection-seal (and projection
                                    (gethash "baseline_seal" projection))))
         (if projection
-            (unless (and (stringp current-seal) (stringp projection-seal)
-                         (string= current-seal projection-seal))
-              (error 'storage-integrity-error :operation operation
-                     :detail "mutable projection baseline seal mismatch"))
+            (progn
+              (unless (and (stringp current-seal) (stringp projection-seal)
+                           (string= current-seal projection-seal))
+                (error 'storage-integrity-error :operation operation
+                       :detail "mutable projection baseline seal mismatch"))
+              ;; A changed PRAGMA data_version means another connection wrote
+              ;; outside this backend's controlled mutation path. Audit once
+              ;; before trusting the new generation. Initial open and explicit
+              ;; same-connection invalidation retain the projection receipt and
+              ;; avoid turning every restart/read into a full-table audit.
+              (when (and previous-data-version
+                         (not (eql data-version previous-data-version)))
+                (let ((audit (%derived-audit-unlocked handle)))
+                  (%derived-verify-import-unlocked handle audit))))
             (let* ((audit (%derived-audit-unlocked handle))
                    (verified-seal (%derived-verify-import-unlocked handle audit)))
               (unless verified-seal
@@ -164,13 +152,6 @@
               (%sqlite-derived-verified-memory-data-version backend)
               data-version)))
     t))
-
-(defun %sqlite-exact-row-turn-id (row)
-  (let ((metadata (and (hash-table-p row)
-                       (gethash "epistemic_metadata" row))))
-    (and (hash-table-p metadata)
-         (let ((turn-id (gethash "turn_id" metadata)))
-           (and (stringp turn-id) (plusp (length turn-id)) turn-id)))))
 
 (defun %sqlite-derived-copy-json-value (value)
   (cond
@@ -186,174 +167,17 @@
     ((listp value) (mapcar #'%sqlite-derived-copy-json-value value))
     (t value)))
 
-(defun %sqlite-derived-exact-cache-current-p
-    (cache seal data-version projection-position)
-  (and (%sqlite-exact-memory-cache-p cache)
-       (string= (or seal "")
-                (or (%sqlite-exact-memory-cache-seal cache) ""))
-       (eql data-version
-            (%sqlite-exact-memory-cache-data-version cache))
-       (eql projection-position
-            (%sqlite-exact-memory-cache-projection-position cache))))
-
-(defun %sqlite-derived-build-exact-cache
-    (backend handle seal data-version projection-position operation)
-  (let ((entries nil)
-        (turn-index (make-hash-table :test #'equal))
-        (id-index (make-hash-table :test #'equal)))
-    (%with-sqlite-statement
-        (statement handle
-                   "SELECT id,scalar_json,embedding,retrieval_embedding,integrity_hash FROM pai_memory_nodes ORDER BY source_ordinal"
-                   operation)
-      (loop for code = (%sqlite-step-raw statement)
-            while (= code +sqlite-row+)
-            do (let* ((id (%sqlite-column-text statement 0))
-                      (scalar (%sqlite-column-text statement 1))
-                      (embedding (%sqlite-column-blob statement 2))
-                      (retrieval (%sqlite-column-blob statement 3))
-                      (integrity (%sqlite-column-text statement 4))
-                      (row (shasht:read-json scalar)))
-                 (unless (and (hash-table-p row)
-                              (string= id (gethash "id" row ""))
-                              (string= integrity
-                                       (%derived-row-integrity
-                                        scalar embedding retrieval)))
-                   (error 'storage-integrity-error
-                          :operation operation
-                          :detail "memory node identity mismatch"))
-                 (let* ((turn-id (%sqlite-exact-row-turn-id row))
-                        (position (length entries))
-                        (entry
-                          (%make-sqlite-exact-cache-entry
-                           id row
-                           (%memory-exact-decode-vector-octets retrieval)
-                           turn-id)))
-                   (setf (gethash id id-index) position)
-                   (push entry entries)
-                   (when turn-id
-                     (push position (gethash turn-id turn-index)))))
-            finally (unless (= code +sqlite-done+)
-                      (%sqlite-check code handle operation))))
-    (let ((ordered (coerce (nreverse entries) 'vector)))
-      ;; Positions were assigned before NREVERSE, while LENGTH counted the
-      ;; eventual source order. Preserve that order and normalize each posting.
-      (maphash (lambda (turn-id positions)
-                 (setf (gethash turn-id turn-index) (nreverse positions)))
-               turn-index)
-      (incf (%sqlite-derived-exact-cache-builds backend))
-      (%make-sqlite-exact-memory-cache
-       seal data-version projection-position ordered turn-index id-index))))
-
-(defun %sqlite-derived-reindex-exact-cache (cache)
-  (let ((turn-index (make-hash-table :test #'equal))
-        (id-index (make-hash-table :test #'equal))
-        (entries (%sqlite-exact-memory-cache-entries cache)))
-    (loop for entry across entries for position from 0
-          for id = (%sqlite-exact-cache-entry-id entry)
-          for turn-id = (%sqlite-exact-cache-entry-turn-id entry)
-          do (setf (gethash id id-index) position)
-             (when turn-id (push position (gethash turn-id turn-index))))
-    (maphash (lambda (turn-id positions)
-               (setf (gethash turn-id turn-index) (nreverse positions)))
-             turn-index)
-    (setf (%sqlite-exact-memory-cache-turn-index cache) turn-index
-          (%sqlite-exact-memory-cache-id-index cache) id-index)
-    cache))
-
-(defun %sqlite-derived-read-exact-cache-entry (handle id operation)
-  (%with-sqlite-statement
-      (statement handle
-                 "SELECT scalar_json,embedding,retrieval_embedding,integrity_hash FROM pai_memory_nodes WHERE id=?1"
-                 operation)
-    (%sqlite-bind-text handle statement 1 id operation)
-    (let ((code (%sqlite-step-raw statement)))
-      (unless (= code +sqlite-row+)
-        (error 'storage-integrity-error :operation operation
-               :detail "incremental memory node is absent"))
-      (let* ((scalar (%sqlite-column-text statement 0))
-             (embedding (%sqlite-column-blob statement 1))
-             (retrieval (%sqlite-column-blob statement 2))
-             (integrity (%sqlite-column-text statement 3))
-             (row (shasht:read-json scalar)))
-        (unless (and (hash-table-p row)
-                     (string= id (gethash "id" row ""))
-                     (string= integrity
-                              (%derived-row-integrity
-                               scalar embedding retrieval)))
-          (error 'storage-integrity-error :operation operation
-                 :detail "incremental memory node identity mismatch"))
-        (%make-sqlite-exact-cache-entry
-         id row (%memory-exact-decode-vector-octets retrieval)
-         (%sqlite-exact-row-turn-id row))))))
-
-(defun %sqlite-derived-mutation-node-ids (event-type payload)
-  (labels ((payload-id (node-payload)
-             (let* ((scalar (gethash "scalar_json" node-payload))
-                    (row (and (stringp scalar) (shasht:read-json scalar)))
-                    (id (and (hash-table-p row) (gethash "id" row))))
-               (%memory-storage-required-string id "node-id")))
-           (command-id (command)
-             (when (string= "memory-node-state"
-                            (gethash "event_type" command ""))
-               (payload-id (gethash "payload" command)))))
-    (remove-duplicates
-     (if (string= event-type "memory-operation-state")
-         (loop for command across (gethash "commands" payload)
-               for id = (command-id command) when id collect id)
-         (and (string= event-type "memory-node-state")
-              (list (payload-id payload))))
-     :test #'string=)))
-
-(defun %sqlite-derived-refresh-exact-cache
-    (backend handle cache node-ids projection-position seal data-version)
-  (let ((new-entries nil))
-    (dolist (id node-ids)
-      (let* ((entry
-               (%sqlite-derived-read-exact-cache-entry
-                handle id :incremental-exact-cache))
-             (position
-               (gethash id (%sqlite-exact-memory-cache-id-index cache))))
-        (if position
-            (setf (aref (%sqlite-exact-memory-cache-entries cache) position)
-                  entry)
-            (push entry new-entries))))
-    (when new-entries
-      (setf (%sqlite-exact-memory-cache-entries cache)
-            (concatenate 'vector
-                         (%sqlite-exact-memory-cache-entries cache)
-                         (coerce (nreverse new-entries) 'vector))))
-    (%sqlite-derived-reindex-exact-cache cache)
-    (setf (%sqlite-exact-memory-cache-seal cache) seal
-          (%sqlite-exact-memory-cache-data-version cache) data-version
-          (%sqlite-exact-memory-cache-projection-position cache)
-          projection-position
-          (%sqlite-derived-verified-memory-seal backend) seal
-          (%sqlite-derived-verified-memory-data-version backend) data-version)
-    (incf (%sqlite-derived-exact-cache-incremental-advances backend))
-    cache))
-
-(defun %sqlite-derived-ensure-exact-cache (backend handle operation)
-  (%sqlite-derived-ensure-memory-verified backend handle operation)
-  (let* ((seal (%sqlite-derived-current-memory-seal handle operation))
-         (data-version (%sqlite-derived-data-version handle operation))
-         (projection (%sqlite-memory-projection-unlocked handle))
-         (projection-position
-           (and projection (gethash "through_storage_position" projection)))
-         (cache (%sqlite-derived-exact-memory-cache backend)))
-    (if (%sqlite-derived-exact-cache-current-p
-         cache seal data-version projection-position)
-        (progn
-          (incf (%sqlite-derived-exact-cache-hits backend))
-          cache)
-        (setf (%sqlite-derived-exact-memory-cache backend)
-              (%sqlite-derived-build-exact-cache
-               backend handle seal data-version projection-position operation)))))
-
 (defparameter *sqlite-derived-base-schema-sql*
   "CREATE TABLE IF NOT EXISTS pai_projection_checkpoints (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, through_event_id INTEGER NOT NULL, through_storage_position INTEGER NOT NULL, projector_revision TEXT NOT NULL, policy_revision TEXT NOT NULL, state_json TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(projection_name,agent_id)); CREATE TABLE IF NOT EXISTS pai_memory_nodes (id TEXT PRIMARY KEY, source_ordinal INTEGER NOT NULL UNIQUE, scalar_json TEXT NOT NULL, embedding BLOB NOT NULL, retrieval_embedding BLOB NOT NULL, integrity_hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pai_memory_edges (id INTEGER PRIMARY KEY, source_ordinal INTEGER NOT NULL UNIQUE, from_id TEXT NOT NULL, to_id TEXT NOT NULL, edge_type TEXT NOT NULL, row_json TEXT NOT NULL, integrity_hash TEXT NOT NULL, UNIQUE(from_id,to_id,edge_type), FOREIGN KEY(from_id) REFERENCES pai_memory_nodes(id), FOREIGN KEY(to_id) REFERENCES pai_memory_nodes(id)); CREATE INDEX IF NOT EXISTS pai_memory_edges_from_idx ON pai_memory_edges(from_id); CREATE INDEX IF NOT EXISTS pai_memory_edges_to_idx ON pai_memory_edges(to_id); CREATE TABLE IF NOT EXISTS pai_memory_imports (import_name TEXT PRIMARY KEY CHECK(import_name='canonical'), schema_version INTEGER NOT NULL, embedding_model TEXT NOT NULL, embedding_revision TEXT NOT NULL, retrieval_embedding_model TEXT NOT NULL, retrieval_embedding_revision TEXT NOT NULL, vector_dimension INTEGER NOT NULL, revision_evidence TEXT NOT NULL, approval_scope TEXT NOT NULL, node_count INTEGER NOT NULL, edge_count INTEGER NOT NULL, node_sha256 TEXT NOT NULL, vector_sha256 TEXT NOT NULL, edge_sha256 TEXT NOT NULL, vector_binary_encoding TEXT NOT NULL, seal_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS pai_memory_projection (projection_name TEXT PRIMARY KEY CHECK(projection_name='canonical'), baseline_seal TEXT NOT NULL, storage_id TEXT NOT NULL, agent_id TEXT NOT NULL, through_event_id INTEGER NOT NULL, through_storage_position INTEGER NOT NULL, boundary_hash TEXT NOT NULL, projector_revision TEXT NOT NULL); CREATE TABLE IF NOT EXISTS pai_memory_projection_binding (projection_name TEXT PRIMARY KEY CHECK(projection_name='canonical'), baseline_event_id INTEGER NOT NULL, baseline_storage_position INTEGER NOT NULL, baseline_boundary_hash TEXT NOT NULL, FOREIGN KEY(projection_name) REFERENCES pai_memory_projection(projection_name)); CREATE TABLE IF NOT EXISTS pai_memory_applied_events (event_id INTEGER PRIMARY KEY, storage_position INTEGER NOT NULL UNIQUE, mutation_hash TEXT NOT NULL, event_hash TEXT NOT NULL)")
 
 (defparameter *sqlite-derived-graph-schema-sql*
   "CREATE TABLE IF NOT EXISTS pai_knowledge_graph_nodes (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, persona_id TEXT NOT NULL, node_id TEXT NOT NULL, node_kind TEXT NOT NULL, canonical_key TEXT NOT NULL, payload_json TEXT NOT NULL, integrity_hash TEXT NOT NULL, PRIMARY KEY(projection_name,agent_id,persona_id,node_id), UNIQUE(projection_name,agent_id,persona_id,node_kind,canonical_key)); CREATE TABLE IF NOT EXISTS pai_knowledge_graph_edges (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, persona_id TEXT NOT NULL, edge_id TEXT NOT NULL, from_node_id TEXT NOT NULL, predicate TEXT NOT NULL, to_node_id TEXT NOT NULL, payload_json TEXT NOT NULL, integrity_hash TEXT NOT NULL, PRIMARY KEY(projection_name,agent_id,persona_id,edge_id), UNIQUE(projection_name,agent_id,persona_id,from_node_id,predicate,to_node_id), FOREIGN KEY(projection_name,agent_id,persona_id,from_node_id) REFERENCES pai_knowledge_graph_nodes(projection_name,agent_id,persona_id,node_id), FOREIGN KEY(projection_name,agent_id,persona_id,to_node_id) REFERENCES pai_knowledge_graph_nodes(projection_name,agent_id,persona_id,node_id)); CREATE INDEX IF NOT EXISTS pai_knowledge_graph_edges_from_idx ON pai_knowledge_graph_edges(projection_name,agent_id,persona_id,from_node_id,predicate); CREATE INDEX IF NOT EXISTS pai_knowledge_graph_edges_to_idx ON pai_knowledge_graph_edges(projection_name,agent_id,persona_id,to_node_id,predicate); CREATE TABLE IF NOT EXISTS pai_knowledge_graph_evidence (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, persona_id TEXT NOT NULL, owner_kind TEXT NOT NULL CHECK(owner_kind IN ('node','edge')), owner_id TEXT NOT NULL, evidence_event_id INTEGER NOT NULL, evidence_role TEXT NOT NULL CHECK(evidence_role IN ('descriptor','source')), evidence_ordinal INTEGER NOT NULL CHECK(evidence_ordinal >= 0), PRIMARY KEY(projection_name,agent_id,persona_id,owner_kind,owner_id,evidence_event_id,evidence_role)); CREATE INDEX IF NOT EXISTS pai_knowledge_graph_evidence_owner_idx ON pai_knowledge_graph_evidence(projection_name,agent_id,persona_id,owner_kind,owner_id,evidence_ordinal)")
+
+(defparameter *sqlite-derived-reviewed-graph-schema-sql*
+  "CREATE TABLE IF NOT EXISTS pai_reviewed_graph_records (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, persona_id TEXT NOT NULL, record_kind TEXT NOT NULL, record_key TEXT NOT NULL, key_kind TEXT NOT NULL CHECK(key_kind IN ('scalar','list','singleton')), payload_json TEXT NOT NULL, integrity_hash TEXT NOT NULL, PRIMARY KEY(projection_name,agent_id,persona_id,record_kind,record_key)); CREATE INDEX IF NOT EXISTS pai_reviewed_graph_records_kind_idx ON pai_reviewed_graph_records(projection_name,agent_id,persona_id,record_kind,record_key); CREATE TABLE IF NOT EXISTS pai_reviewed_graph_aliases (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, persona_id TEXT NOT NULL, entity_id TEXT NOT NULL, alias_folded TEXT NOT NULL, PRIMARY KEY(projection_name,agent_id,persona_id,entity_id,alias_folded)); CREATE INDEX IF NOT EXISTS pai_reviewed_graph_alias_lookup_idx ON pai_reviewed_graph_aliases(projection_name,agent_id,persona_id,alias_folded,entity_id); CREATE TABLE IF NOT EXISTS pai_reviewed_graph_adjacency (projection_name TEXT NOT NULL, agent_id TEXT NOT NULL, persona_id TEXT NOT NULL, entity_id TEXT NOT NULL, fact_id TEXT NOT NULL, PRIMARY KEY(projection_name,agent_id,persona_id,entity_id,fact_id)); CREATE INDEX IF NOT EXISTS pai_reviewed_graph_adjacency_entity_idx ON pai_reviewed_graph_adjacency(projection_name,agent_id,persona_id,entity_id,fact_id)")
+
+(defparameter *sqlite-derived-working-summary-schema-sql*
+  "CREATE TABLE IF NOT EXISTS pai_working_context_summaries (agent_id TEXT NOT NULL, activity_id TEXT NOT NULL, policy_revision TEXT NOT NULL, model_revision TEXT NOT NULL, source_digest TEXT NOT NULL, source_event_ids_json TEXT NOT NULL, response_json TEXT NOT NULL, provenance_json TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(agent_id,activity_id,policy_revision,model_revision,source_digest))")
 
 (defun %sqlite-derived-initialize-schema (handle)
   (%sqlite-exec handle "PRAGMA busy_timeout=5000" :derived-initialize)
@@ -378,7 +202,8 @@
                     ((/= code +sqlite-done+)
                      (%sqlite-check code handle :derived-initialize)))))
           (unless (or (null version) (string= version "1")
-                      (string= version "2"))
+                      (string= version "2") (string= version "3")
+                      (string= version "4"))
             (error 'storage-conflict-error :operation :derived-initialize
                    :detail (format nil "unsupported derived SQLite format ~a"
                                    version)))
@@ -389,14 +214,18 @@
                         :derived-initialize)
           (%sqlite-exec handle *sqlite-derived-graph-schema-sql*
                         :derived-initialize)
+          (%sqlite-exec handle *sqlite-derived-reviewed-graph-schema-sql*
+                        :derived-initialize)
+          (%sqlite-exec handle *sqlite-derived-working-summary-schema-sql*
+                        :derived-initialize)
           (if version
               (%sqlite-exec
                handle
-               "UPDATE pai_derived_meta SET meta_value='2' WHERE meta_key='format_version'"
+               "UPDATE pai_derived_meta SET meta_value='4' WHERE meta_key='format_version'"
                :derived-initialize)
               (%sqlite-exec
                handle
-               "INSERT INTO pai_derived_meta(meta_key,meta_value) VALUES('format_version','2')"
+               "INSERT INTO pai_derived_meta(meta_key,meta_value) VALUES('format_version','4')"
                :derived-initialize)))
         (%sqlite-exec handle "COMMIT" :derived-initialize))
     (error (condition)
@@ -433,7 +262,68 @@
   (declare (ignore backend))
   (%storage-object "schema_version" 1 "backend" "sqlite-derived"
                    "event_log" nil "projection_checkpoints" t
-                   "memory_snapshot" t "single_authority" nil))
+                   "memory_snapshot" t "working_context_summaries" t
+                   "single_authority" nil))
+
+(defun %sqlite-working-summary-integrity
+    (agent-id activity-id policy-revision model-revision source-digest ids-json response-json provenance-json)
+  (ironclad:byte-array-to-hex-string
+   (ironclad:digest-sequence
+    :sha256 (babel:string-to-octets
+             (format nil "~a~%~a~%~a~%~a~%~a~%~a~%~a~%~a" agent-id activity-id
+                     policy-revision model-revision source-digest ids-json response-json provenance-json)
+             :encoding :utf-8))))
+
+(defmethod storage-publish-working-context-summary
+    ((backend sqlite-derived-storage) agent-id activity-id policy-revision model-revision
+     source-digest source-event-ids response provenance)
+  (let* ((ids-json (%storage-json source-event-ids)) (response-json (%storage-json response))
+         (provenance-json (%storage-json provenance))
+         (integrity (%sqlite-working-summary-integrity agent-id activity-id policy-revision
+                                                       model-revision source-digest ids-json
+                                                       response-json provenance-json)))
+    (unless (and (<= (length ids-json) 65536) (<= (length response-json) 65536)
+                 (<= (length provenance-json) 16384))
+      (error 'storage-error :operation :working-summary-publish :detail "Working summary exceeds bounded columns"))
+    (bt:with-lock-held ((%sqlite-derived-lock backend))
+      (%sqlite-derived-in-transaction
+       backend :working-summary-publish
+       (lambda (handle)
+         (%with-sqlite-statement
+             (s handle "INSERT OR REPLACE INTO pai_working_context_summaries(agent_id,activity_id,policy_revision,model_revision,source_digest,source_event_ids_json,response_json,provenance_json,integrity_hash) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)" :working-summary-publish)
+           (loop for value in (list agent-id activity-id policy-revision model-revision source-digest
+                                    ids-json response-json provenance-json integrity)
+                 for index from 1 do (%sqlite-bind-text handle s index value :working-summary-publish))
+           (%sqlite-step handle s :working-summary-publish +sqlite-done+)))))
+    t))
+
+(defmethod storage-load-working-context-summary
+    ((backend sqlite-derived-storage) agent-id activity-id policy-revision model-revision source-digest)
+  (bt:with-lock-held ((%sqlite-derived-lock backend))
+    (let ((handle (%sqlite-derived-handle backend :working-summary-load)))
+      (%with-sqlite-statement
+          (s handle "SELECT source_event_ids_json,response_json,provenance_json,integrity_hash FROM pai_working_context_summaries WHERE agent_id=?1 AND activity_id=?2 AND policy_revision=?3 AND model_revision=?4 AND source_digest=?5" :working-summary-load)
+        (loop for value in (list agent-id activity-id policy-revision model-revision source-digest)
+              for index from 1 do (%sqlite-bind-text handle s index value :working-summary-load))
+        (let ((code (%sqlite-step-raw s)))
+          (cond ((= code +sqlite-done+) nil)
+                ((= code +sqlite-row+)
+                 (when (or (> (%sqlite-column-bytes-raw s 0) 65536)
+                           (> (%sqlite-column-bytes-raw s 1) 65536)
+                           (> (%sqlite-column-bytes-raw s 2) 16384))
+                   (error 'storage-integrity-error :operation :working-summary-load :detail "Oversized working summary"))
+                 (let* ((ids-json (%sqlite-column-text s 0)) (response-json (%sqlite-column-text s 1))
+                        (provenance-json (%sqlite-column-text s 2)) (stored (%sqlite-column-text s 3))
+                        (expected (%sqlite-working-summary-integrity agent-id activity-id policy-revision
+                                                                    model-revision source-digest ids-json
+                                                                    response-json provenance-json)))
+                   (unless (string-equal stored expected)
+                     (error 'storage-integrity-error :operation :working-summary-load
+                            :detail "Working summary integrity mismatch"))
+                   (%storage-object "source_event_ids" (%storage-json-read ids-json :working-summary-load)
+                                    "response" (%storage-json-read response-json :working-summary-load)
+                                    "provenance" (%storage-json-read provenance-json :working-summary-load))))
+                (t (%sqlite-check code handle :working-summary-load))))))))
 
 (defmethod memory-storage-capabilities ((backend sqlite-derived-storage))
   (declare (ignore backend))
@@ -451,9 +341,8 @@
       (let ((handle (%sqlite-derived-handle-slot backend)))
         (%sqlite-check (%sqlite-close-v2 handle) handle :derived-close)
         (setf (%sqlite-derived-closed-p backend) t
-              (%sqlite-derived-handle-slot backend) (cffi:null-pointer)
-              (%sqlite-derived-exact-memory-cache backend) nil))))
-  t)
+              (%sqlite-derived-handle-slot backend) (cffi:null-pointer))))
+  t))
 
 (defmethod storage-publish-checkpoint
     ((backend sqlite-derived-storage) projection-name state
@@ -493,10 +382,9 @@
                   :operation :derived-publish-checkpoint
                   :detail "checkpoint watermark would move backwards")))
        (let* ((state-json (%storage-json state))
-              (hash (%storage-sha256
-                     (%storage-checkpoint-integrity-input
+              (hash (%storage-checkpoint-integrity-sha256
                       projection-name agent-id through-event-id through-position
-                      projector-revision policy-revision state-json))))
+                      projector-revision policy-revision state-json)))
          (%with-sqlite-statement
              (statement handle
                         "INSERT INTO pai_projection_checkpoints(projection_name,agent_id,through_event_id,through_storage_position,projector_revision,policy_revision,state_json,integrity_hash) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(projection_name,agent_id) DO UPDATE SET through_event_id=excluded.through_event_id,through_storage_position=excluded.through_storage_position,projector_revision=excluded.projector_revision,policy_revision=excluded.policy_revision,state_json=excluded.state_json,integrity_hash=excluded.integrity_hash,created_at=CURRENT_TIMESTAMP"
@@ -552,10 +440,9 @@
                     (state-json (%sqlite-column-text statement 4))
                     (stored-hash (%sqlite-column-text statement 5))
                     (actual-hash
-                      (%storage-sha256
-                       (%storage-checkpoint-integrity-input
+                      (%storage-checkpoint-integrity-sha256
                         projection-name agent-id through position projector
-                        policy state-json))))
+                        policy state-json)))
                (unless (string= stored-hash actual-hash)
                  (error 'storage-integrity-error
                         :operation :derived-load-checkpoint
@@ -798,87 +685,144 @@
                  :detail "memory provenance seal mismatch"))
         stored-seal))))
 
+;;; Search keeps only K compact candidates. SQLite owns the collection; no
+;;; generation-sized row/vector cache is constructed. The heap root is the
+;;; worst retained candidate, giving O(N log K) selection and O(K) live state.
+(defun %sqlite-memory-top-k-offer (heap candidate better-p)
+  (labels ((better (a b) (funcall better-p a b)))
+    (cond
+      ((< (length heap) (array-total-size heap))
+       (vector-push candidate heap)
+       (loop for child = (1- (length heap)) then parent
+             while (plusp child)
+             for parent = (floor (1- child) 2)
+             while (better (aref heap parent) (aref heap child))
+             do (rotatef (aref heap parent) (aref heap child))))
+      ((better candidate (aref heap 0))
+       (setf (aref heap 0) candidate)
+       (loop with count = (length heap)
+             for parent = 0 then worst
+             for left = (1+ (* 2 parent))
+             while (< left count)
+             for right = (1+ left)
+             for worst = (if (and (< right count)
+                                  (better (aref heap left) (aref heap right)))
+                             right left)
+             while (better (aref heap parent) (aref heap worst))
+             do (rotatef (aref heap parent) (aref heap worst))))))
+  heap)
+
+(defun %sqlite-memory-exact-better-p (left right)
+  (let ((ld (gethash "distance" left)) (rd (gethash "distance" right)))
+    (if (= ld rd)
+        (string< (gethash "id" left) (gethash "id" right))
+        (< ld rd))))
+
+(defun %sqlite-memory-lexical-better-p (left right)
+  (let ((lt (gethash "lexical_tier" left))
+        (rt (gethash "lexical_tier" right))
+        (lc (gethash "lexical_match_count" left))
+        (rc (gethash "lexical_match_count" right)))
+    (cond ((/= lt rt) (> lt rt))
+          ((/= lc rc) (> lc rc))
+          (t (string< (gethash "id" left) (gethash "id" right))))))
+
+(defun %sqlite-memory-verified-search-row (statement operation)
+  (let* ((id (%sqlite-column-text statement 0))
+         (scalar (%sqlite-column-text statement 1))
+         (embedding (%sqlite-column-blob statement 2))
+         (retrieval (%sqlite-column-blob statement 3))
+         (integrity (%sqlite-column-text statement 4))
+         (row (shasht:read-json scalar)))
+    (unless (and (hash-table-p row)
+                 (string= id (gethash "id" row ""))
+                 (string= integrity
+                          (%derived-row-integrity scalar embedding retrieval)))
+      (error 'storage-integrity-error :operation operation
+             :detail "memory node identity or integrity mismatch"))
+    (values id row retrieval)))
+
+(defun %sqlite-memory-ranking-row (statement operation)
+  "Decode only fields required for ranking. The sealed projection authorizes
+the scan; bounded winners are independently integrity-verified before return."
+  (let* ((id (%sqlite-column-text statement 0))
+         (scalar (%sqlite-column-text statement 1))
+         (retrieval (%sqlite-column-blob statement 2))
+         (row (shasht:read-json scalar)))
+    (unless (and (hash-table-p row) (string= id (gethash "id" row "")))
+      (error 'storage-integrity-error :operation operation
+             :detail "memory ranking row identity mismatch"))
+    (values id row retrieval)))
+
+(defun %sqlite-memory-hydrate-search-results (handle results query operation)
+  ;; Point reads remain inside the same read transaction as verification and
+  ;; ranking. Only winners acquire full content / vectors; callers own them.
+  ;; Always point-read and verify each bounded winner. Hydration controls only
+  ;; which verified fields escape; it never disables output integrity checks.
+  (%with-sqlite-statement
+        (statement handle
+                   "SELECT id,scalar_json,embedding,retrieval_embedding,integrity_hash FROM pai_memory_nodes WHERE id=?1"
+                   operation)
+      (loop for candidate across results
+            do (%sqlite-bind-text handle statement 1 (gethash "id" candidate)
+                                  operation)
+               (%sqlite-step handle statement operation +sqlite-row+)
+               (multiple-value-bind (id row retrieval)
+                   (%sqlite-memory-verified-search-row statement operation)
+                 (declare (ignore id))
+                 (when (or (memory-exact-query-hydrate-p query)
+                           (eq operation :lexical-search))
+                   (setf (gethash "row" candidate) row))
+                 (when (memory-exact-query-include-vector-p query)
+                   (setf (gethash "vector" candidate)
+                         (%memory-exact-decode-vector-octets retrieval))))
+               (%sqlite-reset-raw statement)
+               (%sqlite-clear-bindings-raw statement)))
+  results)
+
 (defmethod memory-storage-exact-search
     ((backend sqlite-derived-storage) (query memory-exact-query))
   (bt:with-lock-held ((%sqlite-derived-lock backend))
-    (let ((handle (%sqlite-derived-handle backend :exact-search)))
+    (let ((handle (%sqlite-derived-handle backend :exact-search))
+          (matches (make-array (memory-exact-query-limit query) :fill-pointer 0)))
       (%sqlite-exec handle "BEGIN" :exact-search)
       (handler-case
-          (let ((matches nil))
-            ;; A full byte audit establishes the generation-bound receipt.
-            ;; Subsequent reads on the unchanged database generation compare
-            ;; only content-free seal/data-version values.  Both checks and
-            ;; the candidate scan share this read transaction, so another
-            ;; connection cannot switch the bytes after validation.
-            (let* ((cache
-                     (%sqlite-derived-ensure-exact-cache
-                      backend handle :exact-search))
-                   (entries (%sqlite-exact-memory-cache-entries cache))
-                   (turns (memory-exact-query-turn-ids query))
-                   (positions
-                     (if (string= "turn-neighborhood-v1"
-                                  (memory-exact-query-profile query))
-                         (remove-duplicates
-                          (loop for turn-id in turns
-                                append
-                                (copy-list
-                                 (gethash turn-id
-                                          (%sqlite-exact-memory-cache-turn-index
-                                           cache))))
-                          :test #'eql)
-                         (loop for position below (length entries)
-                               collect position))))
-              (dolist (position positions)
-                (let* ((entry (aref entries position))
-                       (id (%sqlite-exact-cache-entry-id entry))
-                       (row (%sqlite-exact-cache-entry-row entry))
-                       (retrieval
-                         (%sqlite-exact-cache-entry-retrieval-vector entry)))
-                  (when (%memory-exact-row-eligible-p row query)
-                    (let ((candidate
+          (progn
+            (%sqlite-derived-ensure-memory-verified backend handle :exact-search)
+            ;; Ranking reads one vector, not both vectors plus a full integrity
+            ;; encoding for every discarded row. The projection seal/data-version
+            ;; authorizes the scan; bounded winners are verified by point read.
+            (%with-sqlite-statement
+                (statement handle
+                           "SELECT id,scalar_json,retrieval_embedding FROM pai_memory_nodes ORDER BY source_ordinal"
+                           :exact-search)
+              (loop for code = (%sqlite-step-raw statement)
+                    while (= code +sqlite-row+)
+                    do (multiple-value-bind (id row retrieval)
+                           (%sqlite-memory-ranking-row statement :exact-search)
+                         (when (%memory-exact-row-eligible-p row query)
+                           (%sqlite-memory-top-k-offer
+                            matches
                             (%memory-storage-object
-                             "id" id
-                             "distance"
+                             "id" id "distance"
                              (%memory-exact-cosine-distance
-                              (memory-exact-query-vector query) retrieval))))
-                      (when (memory-exact-query-hydrate-p query)
-                        ;; Parsed rows remain private generation state.
-                        (setf (gethash "row" candidate)
-                              (%sqlite-derived-copy-json-value row)))
-                      (when (memory-exact-query-include-vector-p query)
-                        ;; The cache is process-local rebuildable state, but a
-                        ;; port caller still owns the result it receives.
-                        ;; Never expose the cached specialized array itself.
-                        (setf (gethash "vector" candidate)
-                              (copy-seq retrieval)))
-                      (push candidate matches))))))
-            (setf matches
-                  (sort matches
-                        (lambda (left right)
-                          (let ((left-distance (gethash "distance" left))
-                                (right-distance (gethash "distance" right)))
-                            (if (= left-distance right-distance)
-                                (string< (gethash "id" left)
-                                         (gethash "id" right))
-                                (< left-distance right-distance))))))
-            (let ((report
-                    (%memory-storage-object
-                     "schema_version" 1 "backend" "sqlite-derived"
-                     "profile" (memory-exact-query-profile query)
-                     "distance_metric" "cosine-distance"
-                     "ordering" "distance-then-id-codepoint"
-                     "exact_scan_forced" t
-                     "integrity_verified" t
-                     "result_count" (min (length matches)
-                                         (memory-exact-query-limit query))
-                     "results"
-                     (coerce
-                      (subseq matches 0
-                              (min (length matches)
-                                   (memory-exact-query-limit query)))
-                      'vector))))
-              (%sqlite-exec handle "COMMIT" :exact-search)
-              report))
+                              (memory-exact-query-vector query)
+                              (%memory-exact-decode-vector-octets retrieval)))
+                            #'%sqlite-memory-exact-better-p)))
+                    finally (unless (= code +sqlite-done+)
+                              (%sqlite-check code handle :exact-search))))
+            (sort matches #'%sqlite-memory-exact-better-p)
+            (%sqlite-memory-hydrate-search-results
+             handle matches query :exact-search)
+            (%sqlite-exec handle "COMMIT" :exact-search)
+            (%memory-storage-object
+             "schema_version" 1 "backend" "sqlite-derived"
+             "profile" (memory-exact-query-profile query)
+             "distance_metric" "cosine-distance"
+             "ordering" "distance-then-id-codepoint"
+             "exact_scan_forced" t "integrity_verified" t
+             "integrity_scope" "sealed-projection-and-selected-results"
+             "result_count" (length matches) "results" matches))
         (error (condition)
           (ignore-errors (%sqlite-exec handle "ROLLBACK" :exact-search))
           (error condition))))))
@@ -887,90 +831,62 @@
     ((backend sqlite-derived-storage) (query memory-exact-query))
   (bt:with-lock-held ((%sqlite-derived-lock backend))
     (let ((handle (%sqlite-derived-handle backend :lexical-search))
-          (lexemes (memory-exact-query-lexemes query)))
+          (lexemes (memory-exact-query-lexemes query))
+          (matches (make-array (memory-exact-query-limit query) :fill-pointer 0)))
       (unless lexemes
         (error 'memory-storage-error :operation :lexical-search
                :detail "lexical search requires declared lexemes"))
       (%sqlite-exec handle "BEGIN" :lexical-search)
       (handler-case
-          (let ((matches nil))
-            (%sqlite-derived-ensure-memory-verified
-             backend handle :lexical-search)
+          (progn
+            (%sqlite-derived-ensure-memory-verified backend handle :lexical-search)
             (%with-sqlite-statement
                 (statement handle
-                           "SELECT id,scalar_json,embedding,retrieval_embedding,integrity_hash FROM pai_memory_nodes ORDER BY source_ordinal"
+                           "SELECT id,scalar_json,retrieval_embedding FROM pai_memory_nodes ORDER BY source_ordinal"
                            :lexical-search)
               (loop for code = (%sqlite-step-raw statement)
                     while (= code +sqlite-row+)
-                    do (let* ((id (%sqlite-column-text statement 0))
-                              (scalar (%sqlite-column-text statement 1))
-                              (embedding (%sqlite-column-blob statement 2))
-                              (retrieval (%sqlite-column-blob statement 3))
-                              (integrity (%sqlite-column-text statement 4))
-                              (row (shasht:read-json scalar))
-                              (content (gethash "content" row "")))
-                         (unless (and (string= id (gethash "id" row))
-                                      (string= integrity
-                                               (%derived-row-integrity
-                                                scalar embedding retrieval)))
-                           (error 'storage-integrity-error
-                                  :operation :lexical-search
-                                  :detail "memory node integrity mismatch"))
+                    do (multiple-value-bind (id row retrieval)
+                           (%sqlite-memory-ranking-row statement :lexical-search)
                          (when (%memory-exact-row-eligible-p row query)
-                           (let* ((matched
+                           (let* ((content (gethash "content" row ""))
+                                  (matched
                                     (remove-if-not
                                      (lambda (lexeme)
-                                       (%sqlite-memory-lexeme-match-p
-                                        content lexeme))
+                                       (%sqlite-memory-lexeme-match-p content lexeme))
                                      lexemes))
                                   (phrase-p
                                     (some (lambda (lexeme)
-                                            (string= "phrase"
-                                                     (gethash "kind" lexeme)))
+                                            (string= "phrase" (gethash "kind" lexeme)))
                                           matched)))
                              (when matched
-                               (push
+                               (%sqlite-memory-top-k-offer
+                                matches
                                 (%memory-storage-object
                                  "id" id "distance"
                                  (%memory-exact-cosine-distance
                                   (memory-exact-query-vector query)
-                                  (%memory-exact-decode-vector-octets
-                                   retrieval))
-                                 "row" row
+                                  (%memory-exact-decode-vector-octets retrieval))
                                  "lexical_tier" (if phrase-p 2 1)
                                  "lexical_match_count" (length matched)
                                  "lexical_coverage"
-                                 (/ (length matched)
-                                    (float (length lexemes) 1.0d0))
+                                 (/ (length matched) (float (length lexemes) 1.0d0))
                                  "lexical_terms"
-                                 (coerce (mapcar (lambda (lexeme)
-                                                   (gethash "text" lexeme))
-                                                 matched)
-                                         'vector))
-                                matches)))))
+                                 (coerce (mapcar (lambda (lexeme) (gethash "text" lexeme))
+                                                 matched) 'vector))
+                                #'%sqlite-memory-lexical-better-p)))))
                     finally (unless (= code +sqlite-done+)
                               (%sqlite-check code handle :lexical-search))))
-            (setf matches
-                  (sort matches
-                        (lambda (left right)
-                          (let ((lt (gethash "lexical_tier" left))
-                                (rt (gethash "lexical_tier" right))
-                                (lc (gethash "lexical_match_count" left))
-                                (rc (gethash "lexical_match_count" right)))
-                            (cond ((/= lt rt) (> lt rt))
-                                  ((/= lc rc) (> lc rc))
-                                  (t (string< (gethash "id" left)
-                                              (gethash "id" right))))))))
-            (let* ((count (min (length matches)
-                               (memory-exact-query-limit query)))
-                   (report
-                     (%memory-storage-object
-                      "schema_version" 1 "backend" "sqlite-derived"
-                      "profile" (memory-exact-query-profile query)
-                      "integrity_verified" t "result_count" count
-                      "results" (coerce (subseq matches 0 count) 'vector))))
-              (%sqlite-exec handle "COMMIT" :lexical-search)
-              report))
+            (sort matches #'%sqlite-memory-lexical-better-p)
+            (%sqlite-memory-hydrate-search-results handle matches query :lexical-search)
+            (%sqlite-exec handle "COMMIT" :lexical-search)
+            (%memory-storage-object
+             "schema_version" 1 "backend" "sqlite-derived"
+             "profile" (memory-exact-query-profile query)
+             "integrity_verified" t
+             "integrity_scope" "sealed-projection-and-selected-results"
+             "result_count" (length matches)
+             "results" matches))
         (error (condition)
           (ignore-errors (%sqlite-exec handle "ROLLBACK" :lexical-search))
           (error condition))))))
@@ -1166,10 +1082,8 @@
     (error 'memory-storage-error :operation :apply-memory-mutation
            :detail "mutation is not a validated schema-v1 object"))
   (bt:with-lock-held ((%sqlite-derived-lock backend))
-    (let ((receipt nil) (preserve-cache-p nil) (node-ids nil)
-          (seal nil) (data-version nil) (position nil))
-      (multiple-value-setq
-          (receipt preserve-cache-p node-ids seal data-version position)
+    (let ((receipt nil))
+      (setf receipt
         (%sqlite-derived-in-transaction
          backend :apply-memory-mutation
          (lambda (handle)
@@ -1182,19 +1096,7 @@
                     (event-type (gethash "event_type" mutation))
                     (applied-event-hash
                       (%sqlite-memory-applied-event-hash-unlocked
-                       handle event-id))
-                    (current-seal
-                      (%sqlite-derived-current-memory-seal
-                       handle :apply-memory-mutation))
-                    (current-data-version
-                      (%sqlite-derived-data-version
-                       handle :apply-memory-mutation))
-                    (cache (%sqlite-derived-exact-memory-cache backend))
-                    (cache-current-p
-                      (and projection
-                           (%sqlite-derived-exact-cache-current-p
-                            cache current-seal current-data-version
-                            (gethash "through_storage_position" projection)))))
+                       handle event-id)))
                (unless projection
                  (error 'storage-conflict-error
                         :operation :apply-memory-mutation
@@ -1271,30 +1173,14 @@
                                     :apply-memory-mutation)
                  (%sqlite-step handle statement :apply-memory-mutation
                                +sqlite-done+))
-               (values
-                (%memory-storage-object
-                 "schema_version" 1 "status" "applied" "event_id" event-id)
-                cache-current-p
-                (%sqlite-derived-mutation-node-ids event-type payload)
-                current-seal current-data-version mutation-position))))))
+               (%memory-storage-object
+                "schema_version" 1 "status" "applied" "event_id" event-id))))))
       (when (string= "applied" (gethash "status" receipt ""))
-        (if preserve-cache-p
-            (handler-case
-                (%sqlite-derived-refresh-exact-cache
-                 backend (%sqlite-derived-handle backend :incremental-exact-cache)
-                 (%sqlite-derived-exact-memory-cache backend) node-ids
-                 position seal data-version)
-              (error ()
-                (incf (%sqlite-derived-exact-cache-incremental-fallbacks backend))
-                (setf (%sqlite-derived-verified-memory-seal backend) nil
-                      (%sqlite-derived-verified-memory-data-version backend) nil
-                      (%sqlite-derived-exact-memory-cache backend) nil)))
-            (progn
-              (when (%sqlite-derived-exact-memory-cache backend)
-                (incf (%sqlite-derived-exact-cache-incremental-fallbacks backend)))
-              (setf (%sqlite-derived-verified-memory-seal backend) nil
-                    (%sqlite-derived-verified-memory-data-version backend) nil
-                    (%sqlite-derived-exact-memory-cache backend) nil))))
+        ;; Same-connection writes do not advance PRAGMA data_version.
+        ;; Revalidate the small authority receipt on the next read, while
+        ;; retaining the last observed data_version so a foreign connection's
+        ;; later write still forces the exceptional full audit.
+        (setf (%sqlite-derived-verified-memory-seal backend) nil))
       receipt)))
 
 (defmethod memory-storage-operation-node
@@ -1732,7 +1618,8 @@
                                         :import-snapshot)
                      (%sqlite-step handle statement :import-snapshot
                                    +sqlite-done+))
-                   (%sqlite-derived-clear-exact-cache backend)
+                   (setf (%sqlite-derived-verified-memory-seal backend) nil
+                         (%sqlite-derived-verified-memory-data-version backend) nil)
                    (%memory-storage-object
                     "schema_version" 1 "status" "imported"
                     "backend" "sqlite-derived"

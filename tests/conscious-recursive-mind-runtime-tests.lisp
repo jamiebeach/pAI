@@ -18,10 +18,382 @@
 
 (format t "~%== durable recursive mind ==~%")
 
+(let* ((root (crm-event
+              70001 "agent-stimulus-received"
+              (obj "source" "fleet-board" "text" "Synthetic peer question"
+                   "environment"
+                   (obj "kind" "fleet-board" "owner_id" "board-owner-fixture"
+                        "resource_id" "thread:local")
+                   "details"
+                   (obj "receipt_event_id" 70000 "sender_id" "peer:fixture"))
+              70000))
+       (completed (crm-event 70002 "recursive-stimulus-result"
+                             (obj "status" "completed" "content" "I replied.")
+                             70001))
+       (execution (crm-event
+                   70003 "recursive-tool-execution"
+                   (obj "tool_call_id" "call:local"
+                        "tool_name" "reply-fleet-board-message"
+                        "tool_arguments"
+                        (obj "thread_id" "thread:local"
+                             "reply_to" "message:parent"
+                             "text" "Synthetic response")) 70001))
+       (tool-result (crm-event
+                     70004 "recursive-tool-result"
+                     (obj "tool_call_id" "call:local"
+                          "tool_name" "reply-fleet-board-message"
+                          "execution_status" "executed"
+                          "content" "Replied on this agent's board.") 70001)))
+  (crm-check "model claim alone is absorbed, not replied"
+             (equal "absorbed"
+                    (%recursive-peer-bridge-disposition
+                     (list root completed) root)))
+  (crm-check "successful same-board tool evidence proves reply"
+             (equal "replied"
+                    (%recursive-peer-bridge-disposition
+                     (list root execution tool-result completed) root)))
+  (setf (gethash "content" (gethash "payload" tool-result))
+        "ERROR: synthetic timeout")
+  (crm-check "error tool result cannot prove reply"
+             (equal "publication-unverified"
+                    (%recursive-peer-bridge-disposition
+                     (list root execution tool-result completed) root)))
+  (setf (gethash "content" (gethash "payload" tool-result))
+        "Posted elsewhere"
+        (gethash "tool_name" (gethash "payload" tool-result))
+        "post-fleet-message")
+  (crm-check "wrong board publication cannot prove reply"
+             (equal "publication-unverified"
+                    (%recursive-peer-bridge-disposition
+                     (list root execution tool-result completed) root))))
+
+(let* ((root-id 70101)
+       (call-id "call:remote")
+       (operation-id (%recursive-fleet-operation-id root-id call-id))
+       (root (crm-event
+              root-id "agent-stimulus-received"
+              (obj "source" "fleet-board" "text" "Synthetic remote reply"
+                   "environment"
+                   (obj "kind" "fleet-board" "owner_id" "peer:fixture"
+                        "resource_id" "thread:peer")
+                   "details"
+                   (obj "receipt_event_id" 70100 "sender_id" "peer:fixture"))
+              70100))
+       (completed (crm-event 70102 "recursive-stimulus-result"
+                             (obj "status" "completed") root-id))
+       (execution (crm-event
+                   70103 "recursive-tool-execution"
+                   (obj "tool_call_id" call-id "tool_name" "post-fleet-message"
+                        "tool_arguments"
+                        (obj "peer_id" "peer:fixture" "text" "Reply on peer board"
+                             "thread_id" "thread:peer" "reply_to" "parent"))
+                   root-id))
+       (tool-result (crm-event
+                     70104 "recursive-tool-result"
+                     (obj "tool_call_id" call-id "tool_name" "post-fleet-message"
+                          "execution_status" "executed"
+                          "content" "Posted to peer board") root-id))
+       (intent (crm-event
+                70105 "peer-board-publication-intent"
+                (obj "operation_id" operation-id "peer_id" "peer:fixture"
+                     "request" (obj "thread_id" "thread:peer"
+                                    "text" "Reply on peer board")))))
+  (crm-check "remote post without frozen target is not a proven reply"
+             (equal "publication-unverified"
+                    (%recursive-peer-bridge-disposition
+                     (list root execution tool-result completed) root)))
+  (crm-check "remote post to exact sender thread is a proven reply"
+             (equal "replied"
+                    (%recursive-peer-bridge-disposition
+                     (list root execution tool-result intent completed) root)))
+  (setf (gethash "thread_id"
+                 (gethash "request" (gethash "payload" intent)))
+        "thread:other")
+  (crm-check "remote post to another thread is not a proven reply"
+             (equal "publication-unverified"
+                    (%recursive-peer-bridge-disposition
+                     (list root execution tool-result intent completed) root))))
+
 ;; The full-system harness above makes the production composition explicit;
 ;; this reload preserves the suite's historical subject boundary and allows
 ;; its later impure-adapter fixtures to replace only named edges.
 (load (test-source "recursive-mind-runtime.lisp"))
+
+(let* ((root (crm-event 61001 "agent-stimulus-received"
+                        (obj "source" "synthetic-document-change"
+                             "text" "A synthetic document changed."
+                             "environment"
+                             (obj "kind" "document" "owner_id" "fixture"
+                                  "resource_id" "one")
+                             "authority" "private-cognition-existing-authority")))
+       (descriptor (%recursive-root-descriptor (list root) 61001
+                                               "recursive-fixture")))
+  (crm-check "generic adapter input opens a private stimulus root"
+             (and (string= "stimulus" (gethash "kind" descriptor ""))
+                  (string= "private" (gethash "channel" descriptor ""))
+                  (string= "thread:stimulus:recursive-fixture:61001"
+                           (gethash "thread_id" descriptor ""))
+                  (search "synthetic-document-change"
+                          (gethash "prompt" descriptor ""))))
+  (setf (gethash "authority" (gethash "payload" root)) "operator")
+  (crm-check "generic adapter input cannot forge private-root authority"
+             (handler-case
+                 (progn (%recursive-root-descriptor (list root) 61001
+                                                    "recursive-fixture")
+                        nil)
+               (error () t))))
+
+(let* ((root (crm-event 61100 "agent-stimulus-received"
+                        (obj "source" "synthetic-task-result"
+                             "text" "A synthetic task completed."
+                             "authority" "private-cognition-existing-authority")))
+       (thread "thread:stimulus:recursive-fixture:61100")
+       (request (crm-event 61101 "model-request"
+                           (obj "thread_id" thread "model_call_id" "model:stimulus")
+                           61100))
+       (response (crm-event 61102 "model-response"
+                            (obj "thread_id" thread "model_call_id" "model:stimulus"
+                                 "status" "accepted"
+                                 "assistant_message"
+                                 (obj "role" "assistant"
+                                      "content" "The synthetic result needs no action."))
+                            61100))
+       (result (crm-event 61103 "recursive-stimulus-result"
+                          (obj "thread_id" thread "model_call_id" "model:stimulus"
+                               "content" "The synthetic result needs no action."
+                               "status" "completed" "audience" "private")
+                          61100))
+       (events (list root request response)))
+  (crm-check "in-flight provider outcome is parked from autonomous selection"
+             (null (%recursive-pending-private-stimuli
+                    (list root request) "recursive-fixture")))
+  (crm-check "unfinished generic stimulus is selected from ledger"
+             (equal (list root)
+                    (%recursive-pending-private-stimuli
+                     events "recursive-fixture")))
+  (crm-check "generic selection is isolated by agent identity"
+             (null (%recursive-pending-private-stimuli
+                    events "another-fixture")))
+  (crm-check "accepted generic stimulus reaches the private result boundary"
+             (equal "private-ready"
+                    (gethash "state"
+                             (conscious-recursive-thread-project
+                              events 61100 "recursive-fixture"))))
+  (setf events (append events (list result)))
+  (crm-check "completed generic stimulus cannot be selected again"
+             (null (%recursive-pending-private-stimuli
+                    events "recursive-fixture")))
+  (crm-check "durable generic stimulus result projects to done after restart"
+             (let ((projection (conscious-recursive-thread-project
+                                events 61100 "recursive-fixture")))
+               (and (equal "done" (gethash "state" projection))
+                    (= 61103 (gethash "agent_event_id" projection)))))
+  (setf (gethash "content" (gethash "payload" result)) "Wrong result")
+  (crm-check "generic stimulus projection rejects content mismatches"
+             (handler-case
+                 (progn (conscious-recursive-thread-project
+                         events 61100 "recursive-fixture") nil)
+               (error () t))))
+
+(let* ((root (crm-event 61200 "agent-stimulus-received"
+                        (obj "source" "synthetic-task-result"
+                             "text" "A synthetic task completed."
+                             "authority" "private-cognition-existing-authority")))
+       (events (list root))
+       (calls nil)
+       (old-events (symbol-function '%recursive-thread-events))
+       (old-run (symbol-function '%recursive-run-root-locked))
+       (*conscious-recursive-mind-agent-id* "recursive-fixture")
+       (*conscious-recursive-mind-operator-pending-p* nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function '%recursive-thread-events)
+               (lambda () events)
+               (symbol-function '%recursive-run-root-locked)
+               (lambda (id interaction-id &key background-p)
+                 (push (list id interaction-id background-p) calls)
+                 (obj "status" "stimulus-completed")))
+         (crm-check "quiet stimulus executor advances one retained root"
+                    (and (equal "stimulus-completed"
+                                (gethash "status"
+                                         (conscious-recursive-stimulus-one)))
+                         (equal (list (list 61200
+                                            "interaction:stimulus:61200" t))
+                                calls)))
+         (setf events nil calls nil)
+         (crm-check "quiet stimulus executor is idle without retained work"
+                    (and (equal "idle"
+                                (gethash "status"
+                                         (conscious-recursive-stimulus-one)))
+                         (null calls)))
+         (let ((*conscious-recursive-mind-operator-pending-p* t))
+           (crm-check "operator preempts generic stimulus before execution"
+                      (and (equal "preempted"
+                                  (gethash "status"
+                                           (conscious-recursive-stimulus-one)))
+                           (null calls)))))
+    (setf (symbol-function '%recursive-thread-events) old-events
+          (symbol-function '%recursive-run-root-locked) old-run)))
+
+(let* ((events nil)
+       (unknown-id 63001)
+       (ready-id 63003)
+       (projected-count 0)
+       (largest-projection 0)
+       (original (symbol-function 'conscious-recursive-thread-project)))
+  (dotimes (index 1000)
+    (let* ((id (+ 64000 index))
+           (root (crm-event id "agent-stimulus-received"
+                            (obj "source" "synthetic-queue"
+                                 "text" "Already completed."
+                                 "authority" "private-cognition-existing-authority")))
+           (result (crm-event (+ 65000 index) "recursive-stimulus-result"
+                              (obj "status" "completed") id)))
+      (push root events)
+      (push result events)))
+  (push (crm-event unknown-id "agent-stimulus-received"
+                   (obj "source" "synthetic-queue" "text" "Provider pending."
+                        "authority" "private-cognition-existing-authority")) events)
+  (push (crm-event 63002 "model-request"
+                   (obj "thread_id"
+                        "thread:stimulus:recursive-fixture:63001"
+                        "model_call_id" "model:pending") unknown-id) events)
+  (push (crm-event ready-id "agent-stimulus-received"
+                   (obj "source" "synthetic-queue" "text" "Fresh input."
+                        "authority" "private-cognition-existing-authority")) events)
+  (setf events (nreverse events))
+  (unwind-protect
+       (progn
+         (setf (symbol-function 'conscious-recursive-thread-project)
+               (lambda (subset id agent-id)
+                 (incf projected-count)
+                 (setf largest-projection
+                       (max largest-projection (length subset)))
+                 (funcall original subset id agent-id)))
+         (crm-check "large completed queue projects only bounded causal slices"
+                    (let ((pending (%recursive-pending-private-stimuli
+                                    events "recursive-fixture" :maximum 1)))
+                      (and (= 1 (length pending))
+                           (= ready-id (gethash "id" (first pending)))
+                           (= 2 projected-count)
+                           (<= largest-projection 2)))))
+    (setf (symbol-function 'conscious-recursive-thread-project) original)))
+
+(crm-check "private opportunity alternates after stimulus selection"
+           (equal "private-work"
+                  (recursive-private-opportunity-select
+                   '("stimulus" "private-work") "stimulus")))
+(crm-check "private opportunity alternates after ordinary work"
+           (equal "stimulus"
+                  (recursive-private-opportunity-select
+                   '("stimulus" "private-work") "private-work")))
+(crm-check "single private opportunity cannot be displaced"
+           (equal "private-work"
+                  (recursive-private-opportunity-select
+                   '("private-work") "private-work")))
+
+(let* ((root (crm-event 61210 "agent-stimulus-received"
+                        (obj "source" "synthetic-fairness"
+                             "text" "Synthetic pending attention."
+                             "authority" "private-cognition-existing-authority")))
+       (events (list root))
+       (previous nil)
+       (logged 0)
+       (old-events (symbol-function '%recursive-thread-events))
+       (old-last (symbol-function '%recursive-last-private-opportunity))
+       (old-append (symbol-function '%conversation-append-readable))
+       (*conscious-recursive-mind-agent-id* "recursive-fixture")
+       (*conscious-recursive-mind-operator-pending-p* nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function '%recursive-thread-events)
+               (lambda () events)
+               (symbol-function '%recursive-last-private-opportunity)
+               (lambda () previous)
+               (symbol-function '%conversation-append-readable)
+               (lambda (type payload &key caused-by)
+                 (declare (ignore caused-by))
+                 (crm-check "competition records only a fairness journal event"
+                            (equal "recursive-private-opportunity-selected" type))
+                 (incf logged)
+                 (setf previous (gethash "opportunity" payload))
+                 (values logged (crm-event logged type payload))))
+         (crm-check "successive quiet wakes share stimulus and private work"
+                    (and (equal "stimulus" (%recursive-private-opportunity))
+                         (equal "private-work" (%recursive-private-opportunity))
+                         (equal "stimulus" (%recursive-private-opportunity))
+                         (= 3 logged)))
+         (setf events nil)
+         (crm-check "idle stimulus queue causes no fairness journal flood"
+                    (and (equal "private-work" (%recursive-private-opportunity))
+                         (= 3 logged))))
+    (setf (symbol-function '%recursive-thread-events) old-events
+          (symbol-function '%recursive-last-private-opportunity) old-last
+          (symbol-function '%conversation-append-readable) old-append)))
+
+(let* ((episode-called nil)
+       (old-opportunity (symbol-function '%recursive-private-opportunity))
+       (old-stimulus (symbol-function 'conscious-recursive-stimulus-one))
+       (old-episode
+         (symbol-function 'conscious-recursive-conversation-episode-seal-batch))
+       (*conscious-recursive-mind-operator-pending-p* nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function '%recursive-private-opportunity)
+               (lambda () "stimulus")
+               (symbol-function 'conscious-recursive-stimulus-one)
+               (lambda () (obj "status" "stimulus-completed"))
+               (symbol-function 'conscious-recursive-conversation-episode-seal-batch)
+               (lambda () (setf episode-called t) (obj "status" "completed")))
+         (let ((result (conscious-recursive-mind-quiet-step)))
+           (crm-check "stimulus opportunity is one bounded quiet quantum"
+                      (and (equal "completed" (gethash "status" result))
+                           (equal "stimulus" (gethash "opportunity" result))
+                           (eq :null (gethash "episode" result))
+                           (not episode-called)))))
+    (setf (symbol-function '%recursive-private-opportunity) old-opportunity
+          (symbol-function 'conscious-recursive-stimulus-one) old-stimulus
+          (symbol-function 'conscious-recursive-conversation-episode-seal-batch)
+          old-episode)))
+
+(crm-check "registered board observer is advertised"
+           (member "observe-environment"
+                   (loop for schema across (%recursive-tool-schemas t nil t)
+                         collect (gethash "name" (gethash "function" schema)))
+                   :test #'string=))
+(unwind-protect
+     (progn
+       (register-layer observe-agent-environment fixture-environment-reader
+         :order 100
+         :function
+         (lambda (next request)
+           (declare (ignore next))
+           (obj "status" "observed"
+                "resource_id" (gethash "resource_id" request)
+                "revision" "fixture-r1"
+                "content" "Synthetic current resource.")))
+       (let* ((request (obj "kind" "document" "owner_id" "fixture"
+                            "resource_id" "one"))
+               (names (loop for schema across (%recursive-tool-schemas t nil t)
+                           collect (gethash "name" (gethash "function" schema))))
+              (rendered (%recursive-observe-environment request)))
+         (crm-check "registered environment observers are advertised and bounded"
+                    (and (member "observe-environment" names :test #'string=)
+                         (string= "observed"
+                                  (gethash "status" (shasht:read-json rendered)))))
+         (crm-check "environment observation validates exact bounded identity"
+                    (and (handler-case
+                             (progn (%recursive-validate-tool-arguments
+                                     "observe-environment" request)
+                                    t)
+                           (error () nil))
+                         (handler-case
+                             (progn (%recursive-validate-tool-arguments
+                                     "observe-environment"
+                                     (obj "kind" "document" "owner_id" "fixture"))
+                                    nil)
+                           (error () t))))))
+  (unregister-layer 'observe-agent-environment 'fixture-environment-reader))
 
 (let* ((path (merge-pathnames "provider-profile-fixture.json" (test-state-dir)))
        (profile
@@ -405,10 +777,13 @@
 (let* ((report-symbol 'event-authority-report)
        (replay-symbol 'replay-events)
        (map-symbol 'map-events)
+       (publish-symbol '%recursive-thread-events-checkpoint-publish)
        (report-original (symbol-function report-symbol))
        (replay-original (symbol-function replay-symbol))
        (map-original (symbol-function map-symbol))
+       (publish-original (symbol-function publish-symbol))
        (head 1) (maximum-id 1) (replays 0) (maps 0) (map-windows nil)
+       (checkpoint-publications 0)
        (replay-type-filter :unseen) (map-type-filter :unseen)
        (full-map-type-filter :unseen)
        (event-1 (crm-event 1 "user-message" (obj "text" "one")))
@@ -422,6 +797,8 @@
                *conscious-recursive-thread-events-cache-key* nil
                *conscious-recursive-thread-events-cache-head* nil
                *conscious-recursive-thread-events-cache-max-id* nil
+               *conscious-recursive-thread-events-checkpoint-head* nil
+               *conscious-recursive-thread-events-checkpoint-due-p* nil
                (symbol-function report-symbol)
                (lambda ()
                  (obj "authority" "sqlite" "database" "fixture.sqlite3"
@@ -438,24 +815,39 @@
                  (unless (getf arguments :after-position)
                    (setf full-map-type-filter map-type-filter))
                  (incf maps)
-                 (let* ((after (or (getf arguments :after-position) 0))
+                 (let* ((types (getf arguments :types))
+                        (after (or (getf arguments :after-position) 0))
                         (through (or (getf arguments :through-position)
                                      (length authority-events)))
-                        (selected (subseq authority-events after through)))
+                        (selected
+                          (remove-if-not
+                           (lambda (event)
+                             (or (null types)
+                                 (member (gethash "type" event "") types
+                                         :test #'string=)))
+                           (subseq authority-events after through))))
                    (push (list after through) map-windows)
                    (dolist (event selected) (funcall visitor event))
-                   (values t maximum-id (length selected)))))
+                    (values t maximum-id (length selected))))
+               (symbol-function publish-symbol)
+               (lambda (events publish-head publish-maximum-id)
+                 (declare (ignore events publish-head publish-maximum-id))
+                 (incf checkpoint-publications)
+                 t))
          (let* ((first (%recursive-thread-events))
-                (second (%recursive-thread-events))
+                 (second (%recursive-thread-events))
                 (exact-hit-p
-                  (and (eq first second) (zerop replays) (= 1 maps))))
+                  (and (eq first second) (zerop replays) (= 2 maps))))
            (setf authority-events (list event-1 event-2)
                  head 2 maximum-id 2)
-           (let ((advanced (%recursive-thread-events)))
-             (crm-check "recursive event cache serves an exact SQLite head"
-                        exact-hit-p)
+            (setf checkpoint-publications 0
+                  *conscious-recursive-thread-events-checkpoint-head* 1)
+            (let ((*conscious-recursive-thread-events-checkpoint-interval* 1))
+             (let ((advanced (%recursive-thread-events)))
+              (crm-check "recursive event cache serves an exact SQLite head"
+                         exact-hit-p)
              (crm-check "recursive event cache advances from only the authority tail"
-                        (and (= 2 (length advanced)) (= 2 maps)
+                        (and (= 2 (length advanced)) (= 3 maps)
                              (zerop replays)))
              (crm-check "recursive replay is independent of storage type-filter cardinality"
                         (and (eq :unseen replay-type-filter)
@@ -463,9 +855,16 @@
                                     full-map-type-filter)
                              (> (length *conscious-recursive-thread-event-types*)
                                 32)))
-             (crm-check "recursive event cache keeps a prior generation stable"
-                        (= 1 (length first)))
-             (setf authority-events
+              (crm-check "recursive event cache keeps a prior generation stable"
+                         (= 1 (length first)))
+              (crm-check "recursive cache reads only mark checkpoint maintenance due"
+                         (and (zerop checkpoint-publications)
+                              *conscious-recursive-thread-events-checkpoint-due-p*))
+              (%recursive-thread-events-checkpoint-maybe-publish)
+              (crm-check "quiet maintenance publishes one due recursive checkpoint"
+                         (and (= 1 checkpoint-publications)
+                              (not *conscious-recursive-thread-events-checkpoint-due-p*)))
+              (setf authority-events
                    (list event-1 event-2 event-duplicate-id)
                    head 3)
              (let* ((fallbacks-before
@@ -473,7 +872,7 @@
                     (duplicate-tail (%recursive-thread-events)))
                (crm-check
                 "recursive event cache advances when physical head grows without a new logical ID"
-                (and (= 3 (length duplicate-tail)) (= 3 maps)
+                (and (= 3 (length duplicate-tail)) (= 4 maps)
                      (zerop replays)
                      (= fallbacks-before
                         *conscious-recursive-thread-events-cache-fallbacks*)
@@ -483,16 +882,121 @@
              (setf authority-events (list event-1 event-2) head 2)
              (let ((rebuilt (%recursive-thread-events)))
                (crm-check "recursive event cache rebuilds a regressed physical head"
-                          (and (= 2 (length rebuilt)) (= 4 maps)
+                          (and (= 2 (length rebuilt)) (= 6 maps)
                                (zerop replays)
-                               (equal '(0 2) (first map-windows))))))))
+                                (equal '(0 2) (first map-windows)))))))))
     (setf (symbol-function report-symbol) report-original
           (symbol-function replay-symbol) replay-original
           (symbol-function map-symbol) map-original
+          (symbol-function publish-symbol) publish-original
           *conscious-recursive-thread-events-cache* nil
           *conscious-recursive-thread-events-cache-key* nil
           *conscious-recursive-thread-events-cache-head* nil
-          *conscious-recursive-thread-events-cache-max-id* nil)))
+          *conscious-recursive-thread-events-cache-max-id* nil
+          *conscious-recursive-thread-events-checkpoint-due-p* nil)))
+
+;; A production-sized ledger must never turn a missing/stale projection into an
+;; implicit full replay.  That operation is reserved for the explicit offline
+;; rebuild script, where the operator can provision appropriate memory.
+(let* ((load-symbol 'event-authority-checkpoint-load)
+       (binding-symbol 'event-authority-checkpoint-source-binding)
+       (load-original (symbol-function load-symbol))
+       (binding-original (symbol-function binding-symbol))
+       (binding-calls 0)
+       (checkpoint
+         (obj "projector_revision" "recursive-thread-hot-v1"
+              "policy_revision" "owner-separated-provider-compaction-v3"
+              "through_storage_position" 11 "through_event_id" 11
+              "state" (obj "source_binding" "fixture-seal"
+                           "events" #()))))
+  (unwind-protect
+       (progn
+         (setf (symbol-function load-symbol)
+               (lambda (name)
+                 (declare (ignore name)) checkpoint)
+               (symbol-function binding-symbol)
+               (lambda (event-id position)
+                 (declare (ignore event-id position))
+                 (incf binding-calls)
+                 "fixture-seal"))
+         (crm-check "v1 checkpoint with matching old policy is refused at restore"
+                    (and (null (%recursive-thread-events-checkpoint-restore
+                                "fixture" 11 11))
+                         (zerop binding-calls))))
+    (setf (symbol-function load-symbol) load-original
+          (symbol-function binding-symbol) binding-original)))
+
+(let* ((restore-symbol '%recursive-thread-events-checkpoint-restore)
+       (replay-symbol '%recursive-thread-events-full-replay)
+       (restore-original (symbol-function restore-symbol))
+       (replay-original (symbol-function replay-symbol))
+       (full-replays 0)
+       (message nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function restore-symbol) (lambda (&rest ignored)
+                                                  (declare (ignore ignored)) nil)
+               (symbol-function replay-symbol) (lambda (&rest ignored)
+                                                 (declare (ignore ignored))
+                                                 (incf full-replays)
+                                                 nil))
+         (let ((*conscious-recursive-thread-events-maintenance-replay-p* nil)
+               (*conscious-recursive-thread-events-full-replay-max-head* 10))
+           (handler-case
+               (%recursive-thread-events-cache-rebuild "fixture" 11 11)
+             (error (condition)
+               (setf message (princ-to-string condition)))))
+         (crm-check "large normal startup fails closed without a recursive checkpoint"
+                    (and (zerop full-replays)
+                         (stringp message)
+                         (search "normal operation will not full-replay"
+                                 message))))
+    (setf (symbol-function restore-symbol) restore-original
+          (symbol-function replay-symbol) replay-original)))
+
+(let* ((assistant (obj "role" "assistant" "content" "kept"
+                       "reasoning_details" (vector (obj "text" "large"))))
+       (response (crm-event 2 "model-response"
+                            (obj "status" "accepted"
+                                 "assistant_message" assistant)
+                            1))
+       (terminal (crm-event 3 "agent-message" (obj "text" "kept") 1))
+       (settled (%recursive-settled-root-register (list terminal)))
+       (compacted (%recursive-compact-settled-provider-event response settled))
+       (compacted-payload (%recursive-event-payload compacted))
+       (unsettled (%recursive-compact-settled-provider-event
+                   response (make-hash-table :test #'eql))))
+  (crm-check "settled provider transcript is absent from the hot replay copy"
+             (and (not (nth-value 1
+                         (gethash "assistant_message" compacted-payload)))
+                  (eq t (gethash "settled_assistant_compacted"
+                                 compacted-payload))))
+  (crm-check "settled provider compaction does not mutate authority objects"
+             (nth-value 1 (gethash "reasoning_details" assistant)))
+  (crm-check "unsettled provider reasoning remains exact for recovery"
+             (eq response unsettled)))
+
+(let ((graph-request
+        (crm-event 1 "model-request"
+                   (obj "knowledge_graph_formation" t
+                        "formation_phase" "facts")))
+      (graph-response
+        (crm-event 2 "model-response"
+                   (obj "knowledge_graph_formation" t
+                        "formation_phase" "facts"
+                        "assistant_message"
+                        (obj "role" "assistant" "content" "large"))))
+      (conversation-response
+        (crm-event 3 "model-response"
+                   (obj "status" "accepted"
+                        "assistant_message"
+                        (obj "role" "assistant" "content" "keep")))))
+  (crm-check "graph-owner model requests are outside recursive replay"
+             (not (%recursive-thread-event-p graph-request)))
+  (crm-check "graph-owner model responses are outside recursive replay"
+             (not (%recursive-thread-event-p graph-response)))
+  (crm-check "conversation model responses remain recursive replay evidence"
+             (%recursive-thread-event-p conversation-response)))
 
 (let ((*conscious-recursive-mind-operator-pending-p* nil))
   (setf *conscious-recursive-mind-operator-waiters* 0)
@@ -578,6 +1082,7 @@
                                       "content" "I can read the file.")) 1))
        (reply (crm-event 4 "agent-message"
                          (obj "text" "I can read the file."
+                              "model_call_id" "model:1"
                               "channel" "terminal"
                               "metadata"
                               (obj "source" "recursive-mind-v1"
@@ -602,7 +1107,64 @@
                (list root request response reply) 1 "recursive-fixture")))
     (crm-check "durable reply completes recursion"
                (and (string= "done" (gethash "state" done))
-                     (string= "I can read the file." (gethash "content" done))))))
+                     (string= "I can read the file." (gethash "content" done)))))
+  (let* ((settled (%recursive-settled-root-register (list reply)))
+         (compacted (%recursive-compact-settled-provider-event
+                     response settled))
+         (done (conscious-recursive-thread-project
+                (list root request compacted reply) 1 "recursive-fixture")))
+    (crm-check "same-generation compacted public reply still completes"
+               (and (string= "done" (gethash "state" done))
+                    (string= "I can read the file." (gethash "content" done))))))
+
+(let* ((thread "thread:recursive-fixture:1")
+       (root (crm-event 1 "user-message"
+                        (obj "text" "Synthetic tool turn" "channel" "terminal"
+                             "metadata" (obj "source" "recursive-mind-v1" "thread_id" thread))))
+       (call (obj "id" "tool:1" "type" "function"
+                  "function" (obj "name" "lisp-eval" "arguments" "{\"form\":\"(+ 1 1)\"}")))
+       (events
+         (list root
+               (crm-event 2 "model-request" (obj "thread_id" thread "model_call_id" "model:1") 1)
+               (crm-event 3 "model-response"
+                          (obj "thread_id" thread "model_call_id" "model:1" "status" "accepted"
+                               "assistant_message" (obj "role" "assistant" "content" :null
+                                                        "tool_calls" (vector call))) 1)
+               (crm-event 4 "recursive-tool-execution"
+                          (obj "thread_id" thread "model_call_id" "model:1" "tool_call_id" "tool:1") 1)
+               (crm-event 5 "recursive-tool-result"
+                          (obj "thread_id" thread "model_call_id" "model:1" "tool_call_id" "tool:1"
+                               "execution_status" "executed" "content" "2") 1)
+               (crm-event 6 "model-request" (obj "thread_id" thread "model_call_id" "model:2") 1)
+               (crm-event 7 "model-response"
+                          (obj "thread_id" thread "model_call_id" "model:2" "status" "accepted"
+                               "assistant_message" (obj "role" "assistant" "content" "Synthetic answer")) 1)
+               (crm-event 8 "agent-message"
+                          (obj "text" "Synthetic answer" "model_call_id" "model:2" "channel" "terminal"
+                               "metadata" (obj "source" "recursive-mind-v1" "thread_id" thread)) 1)))
+       (settled (%recursive-settled-root-register events))
+       (hot (mapcar (lambda (event) (%recursive-compact-settled-provider-event event settled)) events))
+       (reads nil))
+  (flet ((read-exact (id &key event-type)
+           (push id reads)
+           (find-if (lambda (event) (and (= id (gethash "id" event))
+                                        (equal event-type (gethash "type" event)))) events)))
+    (let* ((hydrated (%recursive-root-replay-events hot 1 "recursive-fixture" #'read-exact))
+           (done (conscious-recursive-thread-project hydrated 1 "recursive-fixture")))
+      (crm-check "compacted tool turn replays using exact authority responses"
+                 (and (equal "done" (gethash "state" done))
+                      (equal "Synthetic answer" (gethash "content" done))
+                      (equal '(7 3) reads)))
+      (crm-check "hydration leaves shared compacted generation unchanged"
+                 (null (gethash "assistant_message" (gethash "payload" (third hot))))))
+    (setf reads nil)
+    (%recursive-root-replay-events hot 99 "recursive-fixture" #'read-exact)
+    (crm-check "hydration never reads unrelated roots" (null reads)))
+  (crm-check "missing authority response fails closed"
+             (handler-case
+                 (progn (%recursive-root-replay-events hot 1 "recursive-fixture"
+                          (lambda (&rest ignored) (declare (ignore ignored)) nil)) nil)
+               (error () t))))
 
 (let* ((content
          (format nil
@@ -681,8 +1243,8 @@
 (defvar *conscious-conversation-turn-timing-ms* nil)
 
 (defparameter *crm-ordinary-native-tool-names*
-  '("inspect-work-docket" "manage-work-docket"
-    "lisp-eval" "bash" "brave-search" "web-fetch" "search-memory"))
+  '("observe-environment" "inspect-work-docket" "manage-work-docket"
+    "lisp-eval" "bash" "brave-search" "web-fetch" "search-experience" "search-memory"))
 
 (defun crm-tool-schema-names (tools)
   (loop for schema across tools
@@ -2119,7 +2681,7 @@
                                        (gethash "tool_name" payload "")))))
                      *crm-events*))))
     (crm-check "autonomous curiosity receives the full configured native tool schema"
-               (and (equal '(7 7)
+               (and (equal '(9 9)
                            (subseq *crm-provider-tool-counts* 0 2))
                     (equal (list *crm-ordinary-native-tool-names*
                                  *crm-ordinary-native-tool-names*)
@@ -2753,7 +3315,7 @@
                         :test #'string=)))
   (crm-check "duplicate suppression reserves a tool-free synthesis call"
              (and
-              (equal '(7 7 0) (reverse *crm-provider-tool-counts*))
+              (equal '(9 9 0) (reverse *crm-provider-tool-counts*))
               (equal (list *crm-ordinary-native-tool-names*
                            *crm-ordinary-native-tool-names*
                            nil)
@@ -2834,7 +3396,7 @@
   (crm-check "cumulative tool evidence converges to a reply"
              (string= "replied" (gethash "status" result)))
   (crm-check "cumulative tool evidence closes schemas for synthesis"
-             (and (equal '(7 0) (reverse *crm-provider-tool-counts*))
+             (and (equal '(9 0) (reverse *crm-provider-tool-counts*))
                   (equal (list *crm-ordinary-native-tool-names* nil)
                          (reverse *crm-provider-tool-names*)))))
 
@@ -2872,7 +3434,7 @@
            "use the one actual boundary that still fits")))
     (crm-check "near-ceiling recursive boundary still advertises native tools"
                (and (string= "replied" (gethash "status" result))
-                    (equal '(7) (reverse *crm-provider-tool-counts*))
+                    (equal '(9) (reverse *crm-provider-tool-counts*))
                     (equal (list *crm-ordinary-native-tool-names*)
                            (reverse *crm-provider-tool-names*))))))
 (let ((*crm-openrouter-p* t)
@@ -5406,6 +5968,427 @@
     (crm-check "incorporation sees actual same-thread receipts including errors"
                (and (= 1 (length receipts)) (= 19 (gethash "event_id" (aref receipts 0)))
                     (search "ERROR" (gethash "content_excerpt" (aref receipts 0)))))))
+
+(let* ((*crm-events* nil)
+       (reads 0)
+       (request (obj "kind" "document" "owner_id" "fixture"
+                     "resource_id" "synthetic-one"))
+       (projection (obj "state" "outcome-unknown"
+                        "thread_id" "thread:stimulus:fixture:77"
+                        "model_call_id" "model:fixture:77"
+                        "tool_call_id" "tool:fixture:77"
+                        "tool_name" "observe-environment"
+                        "tool_arguments" request)))
+  (unwind-protect
+       (progn
+         (register-layer observe-agent-environment fixture-recovery-reader
+           :order 100
+           :function (lambda (next arguments)
+                       (declare (ignore next arguments))
+                       (incf reads)
+                       (obj "status" "observed" "revision" "fixture-r2"
+                            "content" "Synthetic current state.")))
+         (crm-check "interrupted read-only observation records a fresh result"
+                    (and (%recursive-recover-safe-tool-outcome projection 77)
+                         (= 1 reads)
+                         (= 1 (length *crm-events*))
+                         (let* ((event (first *crm-events*))
+                                (payload (gethash "payload" event)))
+                           (and (equal "recursive-tool-result" (gethash "type" event))
+                                (= 77 (gethash "caused_by" event))
+                                (equal "tool:fixture:77" (gethash "tool_call_id" payload))
+                                (equal "observed"
+                                       (gethash "status"
+                                                (shasht:read-json
+                                                 (gethash "content" payload))))))))
+         (setf (gethash "tool_name" projection) "bash")
+         (crm-check "interrupted effect remains outcome unknown"
+                    (and (null (%recursive-recover-safe-tool-outcome projection 77))
+                         (= 1 reads)
+                         (= 1 (length *crm-events*)))))
+    (unregister-layer 'observe-agent-environment 'fixture-recovery-reader)))
+
+(let* ((*crm-events* nil)
+       (calls nil)
+       (*conscious-recursive-mind-fleet-message-fn*
+         (lambda (peer text new-thread thread-id reply-to operation-id)
+           (push (list peer text new-thread thread-id reply-to operation-id)
+                 calls)
+           "Posted to synthetic peer board."))
+       (*conscious-recursive-mind-fleet-board-reply-fn*
+         (lambda (thread-id reply-to text operation-id)
+           (push (list thread-id reply-to text operation-id) calls)
+           "Replied on synthetic local board."))
+       (projection
+         (obj "state" "outcome-unknown" "thread_id" "recursive:fixture"
+              "model_call_id" "model:fixture" "tool_call_id" "tool:fixture"
+              "tool_name" "post-fleet-message"
+              "tool_arguments" (obj "peer_id" "peer:fixture"
+                                    "text" "Synthetic message."))))
+  (crm-check "implicit-thread fleet effect re-enters frozen-request adapter"
+             (and (%recursive-recover-safe-tool-outcome projection 77)
+                  (= 1 (length calls))
+                  (null (fourth (first calls)))
+                  (equal (%recursive-fleet-operation-id 77 "tool:fixture")
+                         (sixth (first calls)))))
+  (setf calls nil *crm-events* nil
+        (gethash "new_thread" (gethash "tool_arguments" projection)) t)
+  (crm-check "explicit new-thread fleet effect recovers with durable operation key"
+             (and (%recursive-recover-safe-tool-outcome projection 77)
+                  (= 1 (length calls))
+                  (equal (%recursive-fleet-operation-id 77 "tool:fixture")
+                         (sixth (first calls)))
+                  (equal "recursive-tool-result"
+                         (gethash "type" (first *crm-events*)))))
+  (setf calls nil *crm-events* nil
+        (gethash "new_thread" (gethash "tool_arguments" projection)) nil
+        (gethash "thread_id" (gethash "tool_arguments" projection))
+        "thread:peer-fixture"
+        (gethash "reply_to" (gethash "tool_arguments" projection))
+        "message:peer-fixture")
+  (crm-check "explicit peer-board thread and parent recover"
+             (and (%recursive-recover-safe-tool-outcome projection 77)
+                  (= 1 (length calls))
+                  (equal "thread:peer-fixture" (fourth (first calls)))
+                  (equal "message:peer-fixture" (fifth (first calls)))))
+  (setf calls nil *crm-events* nil
+        (gethash "tool_name" projection) "reply-fleet-board-message"
+        (gethash "tool_arguments" projection)
+        (obj "thread_id" "thread:fixture" "reply_to" "message:fixture"
+             "text" "Synthetic reply."))
+  (crm-check "same-board reply recovers with stable operation key"
+             (and (%recursive-recover-safe-tool-outcome projection 77)
+                  (= 1 (length calls))
+                  (equal (%recursive-fleet-operation-id 77 "tool:fixture")
+                         (fourth (first calls))))))
+
+;; Earlier fixture replaces the projector for curiosity-specific tests. Restore
+;; the production projector for this cross-boundary interrupted-root check.
+(load (test-source "stimulus.lisp"))
+(let* ((root (crm-event 1 "agent-stimulus-received"
+                        (obj "source" "synthetic-notice" "text" "Resource changed."
+                             "authority" "private-cognition-existing-authority")))
+       (thread "thread:stimulus:recursive-fixture:1")
+       (arguments (obj "kind" "document" "owner_id" "fixture"
+                       "resource_id" "synthetic-one"))
+       (call (obj "id" "tool:fixture:1" "type" "function"
+                  "function" (obj "name" "observe-environment"
+                                  "arguments" (shasht:write-json arguments nil))))
+       (events (list root
+                     (crm-event 2 "model-request"
+                                (obj "thread_id" thread "model_call_id" "model:fixture:1") 1)
+                     (crm-event 3 "model-response"
+                                (obj "thread_id" thread "model_call_id" "model:fixture:1"
+                                     "status" "accepted"
+                                     "assistant_message"
+                                     (obj "role" "assistant" "content" :null
+                                          "tool_calls" (vector call))) 1)
+                     (crm-event 4 "recursive-tool-execution"
+                                (obj "thread_id" thread "model_call_id" "model:fixture:1"
+                                     "tool_call_id" "tool:fixture:1"
+                                     "tool_name" "observe-environment") 1)))
+       (projection (conscious-recursive-thread-project events 1 "recursive-fixture")))
+  (crm-check "interrupted projection retains the recorded read and arguments"
+             (and (equal "outcome-unknown" (gethash "state" projection))
+                  (equal "observe-environment" (gethash "tool_name" projection))
+                  (equal "synthetic-one"
+                         (gethash "resource_id"
+                                  (gethash "tool_arguments" projection)))))
+  (unregister-layer 'observe-agent-environment 'fleet-board-observer)
+  (unwind-protect
+       (crm-check "unregistered interrupted read remains parked"
+                  (null (%recursive-pending-private-stimuli
+                         events "recursive-fixture" :maximum 1)))
+    (register-layer observe-agent-environment fleet-board-observer
+      :function (lambda (next request)
+                  (if (equal "fleet-board-thread" (gethash "kind" request))
+                      (fleet-observe-environment request)
+                      (funcall next request)))))
+  (unwind-protect
+       (progn
+         (register-layer observe-agent-environment fixture-queued-reader
+           :order 100
+           :function (lambda (next request)
+                       (declare (ignore next request))
+                       (obj "status" "fresh-read")))
+         (crm-check "registered interrupted read becomes safely selectable"
+                    (equal 1
+                           (gethash "id"
+                                    (first (%recursive-pending-private-stimuli
+                                            events "recursive-fixture"
+                                            :maximum 1)))))
+         (setf (gethash "tool_name" projection) "bash")
+         (crm-check "arbitrary interrupted effect remains parked"
+                    (not (%recursive-stimulus-projection-runnable-p
+                          projection))))
+    (unregister-layer 'observe-agent-environment 'fixture-queued-reader)))
+
+(let* ((*crm-events* nil)
+       (*conscious-recursive-mind-fleet-board-reply-fn* nil)
+       (root-id 61300)
+       (thread "thread:stimulus:recursive-fixture:61300")
+       (arguments (obj "thread_id" "fixture-thread"
+                       "reply_to" "fixture-parent"
+                       "text" "Synthetic direct reply."))
+       (call (obj "id" "tool:direct:1" "type" "function"
+                  "function" (obj "name" "reply-fleet-board-message"
+                                  "arguments" (shasht:write-json arguments nil))))
+       (root (crm-event
+              root-id "peer-message-received"
+              (obj "agent_id" "recursive-fixture"
+                   "sender_id" "fixture-peer"
+                   "board_owner_id" "recursive-fixture"
+                   "thread_id" "fixture-thread"
+                   "message_id" "fixture-parent"
+                   "text" "A synthetic direct question."
+                   "trust" "authenticated-peer-content")))
+       (events
+         (list root
+               (crm-event 61301 "model-request"
+                          (obj "thread_id" thread
+                               "model_call_id" "model:direct:1") root-id)
+               (crm-event 61302 "model-response"
+                          (obj "thread_id" thread
+                               "model_call_id" "model:direct:1"
+                               "status" "accepted"
+                               "assistant_message"
+                               (obj "role" "assistant" "content" :null
+                                    "tool_calls" (vector call))) root-id)
+               (crm-event 61303 "recursive-tool-execution"
+                          (obj "thread_id" thread
+                               "model_call_id" "model:direct:1"
+                               "tool_call_id" "tool:direct:1"
+                               "tool_name" "reply-fleet-board-message") root-id)))
+       (projection (conscious-recursive-thread-project
+                    events root-id "recursive-fixture"))
+       (sends nil))
+  (crm-check "uncertain direct provider request stays parked"
+             (null (%recursive-pending-private-stimuli
+                    (subseq events 0 2) "recursive-fixture")))
+  (crm-check "interrupted direct reply projects an uncertain tool effect"
+             (equal "outcome-unknown" (gethash "state" projection)))
+  (crm-check "direct reply stays parked without its publication adapter"
+             (null (%recursive-pending-private-stimuli
+                    events "recursive-fixture")))
+  (setf *conscious-recursive-mind-fleet-board-reply-fn*
+        (lambda (board-thread parent text operation-id)
+          (push (list board-thread parent text operation-id) sends)
+          "Synthetic board accepted one reply."))
+  (crm-check "registered idempotent direct reply becomes selectable"
+             (equal root-id
+                    (gethash "id" (first (%recursive-pending-private-stimuli
+                                           events "recursive-fixture")))))
+  (crm-check "direct reply recovery uses one stable operation key"
+             (and (%recursive-recover-safe-tool-outcome projection root-id)
+                  (= 1 (length sends))
+                  (equal (%recursive-fleet-operation-id
+                          root-id "tool:direct:1")
+                         (fourth (first sends)))))
+  (setf events (append events *crm-events*))
+  (crm-check "durable recovered result resumes after tool without resending"
+             (let ((resumed (conscious-recursive-thread-project
+                             events root-id "recursive-fixture")))
+               (and (equal "model-ready" (gethash "state" resumed))
+                    (equal root-id
+                           (gethash "id"
+                                    (first (%recursive-pending-private-stimuli
+                                            events "recursive-fixture"))))
+                    (= 1 (length sends))))))
+
+(let ((*conscious-recursive-mind-fleet-message-fn*
+        (lambda (&rest ignored) (declare (ignore ignored)) "Synthetic post")))
+  (crm-check "validated remote fleet post can resume from an uncertain effect"
+             (%recursive-stimulus-projection-runnable-p
+              (obj "state" "outcome-unknown"
+                   "thread_id" "thread:stimulus:recursive-fixture:61310"
+                   "model_call_id" "model:remote:1"
+                   "tool_call_id" "tool:remote:1"
+                   "tool_name" "post-fleet-message"
+                   "tool_arguments"
+                   (obj "peer_id" "fixture-peer" "text" "Synthetic post"
+                        "thread_id" "fixture-thread"
+                        "reply_to" "fixture-parent")))))
+
+(let* ((*crm-events* nil)
+       (path (merge-pathnames "direct-crash-board.sexp" (test-state-dir)))
+       (board (pai.fleet:board-store-load path))
+       (original-append (symbol-function '%conversation-append-readable))
+       (drop-result-once t)
+       (sends nil))
+  (multiple-value-bind (parent-id board-thread)
+      (pai.fleet:board-post-message
+       board :new-thread-title "Synthetic crash drill"
+       :author-id "fixture-peer" :author-name "Fixture Peer"
+       :text "A synthetic question")
+    (let* ((*conscious-recursive-mind-fleet-board-reply-fn*
+             (lambda (thread-id reply-to text operation-id)
+               (push operation-id sends)
+               (pai.fleet:board-post-message
+                board :thread-id thread-id :reply-to reply-to
+                :author-id "recursive-fixture" :author-name "Fixture Agent"
+                :text text :operation-id operation-id
+                :request-key
+                (shasht:write-json (vector thread-id reply-to text) nil))
+               "Synthetic board accepted the reply."))
+           (projection
+             (obj "state" "outcome-unknown"
+                  "thread_id" "thread:stimulus:recursive-fixture:61320"
+                  "model_call_id" "model:crash:1"
+                  "tool_call_id" "tool:crash:1"
+                  "tool_name" "reply-fleet-board-message"
+                  "tool_arguments"
+                  (obj "thread_id" board-thread "reply_to" parent-id
+                       "text" "A synthetic response."))))
+      (unwind-protect
+           (progn
+             (setf (symbol-function '%conversation-append-readable)
+                   (lambda (type payload &rest keys)
+                     (when (and drop-result-once
+                                (equal type "recursive-tool-result"))
+                       (setf drop-result-once nil)
+                       (error "Synthetic crash before local result append"))
+                     (apply original-append type payload keys)))
+             (crm-check "board accepts direct reply before result-append crash"
+                        (and (handler-case
+                                 (progn (%recursive-recover-safe-tool-outcome
+                                         projection 61320)
+                                        nil)
+                               (error () t))
+                             (= 1 (length sends))
+                             (= 2 (length
+                                   (pai.fleet:board-thread-messages
+                                    board board-thread)))
+                             (null *crm-events*)))
+             (setf board (pai.fleet:board-store-load path))
+             (crm-check "accepted reply survives board store reopen"
+                        (= 2 (length
+                              (pai.fleet:board-thread-messages
+                               board board-thread))))
+             (crm-check "recovery retries after missing local result"
+                        (%recursive-recover-safe-tool-outcome
+                         projection 61320))
+             (crm-check "recovery reuses exact publication identity"
+                        (and (= 2 (length sends))
+                             (equal (first sends) (second sends))))
+             (crm-check "idempotent retry leaves one board reply"
+                        (= 2 (length
+                              (pai.fleet:board-thread-messages
+                               board board-thread))))
+             (crm-check "retry journals one local tool result"
+                        (= 1 (count "recursive-tool-result" *crm-events*
+                                    :test #'equal
+                                    :key (lambda (event)
+                                           (gethash "type" event))))))
+        (setf (symbol-function '%conversation-append-readable)
+              original-append)))))
+
+(let* ((own (obj "id" 77001 "type" "agent-message" "agent_id" "recursive-fixture"
+                 "timestamp" "2026-09-21T12:00:00Z" "caused_by" 77000
+                 "payload" (obj "text" "A synthetic original observation.")))
+       (other (obj "id" 77002 "type" "agent-message" "agent_id" "other-fixture"
+                   "payload" (obj "text" "Another agent's private record.")))
+       (*conscious-recursive-mind-agent-id* "recursive-fixture")
+       (*event-authority-port*
+         (list :read-event
+               (lambda (id kind)
+                 (find-if (lambda (event)
+                            (and (eql id (gethash "id" event))
+                                 (equal kind (gethash "type" event))))
+                          (list own other)))
+               :experience-page
+               (lambda (from to before limit)
+                 (declare (ignore from to before limit))
+                 (values (list own) nil)))))
+  (crm-check "experience search exact evidence retains source link"
+             (let ((page (shasht:read-json
+                          (%recursive-search-experience (obj "event_id" 77001)))))
+               (and (eql 77001 (gethash "source_event_id" page))
+                    (search "synthetic original" (gethash "content" page)))))
+  (crm-check "experience search refuses another agent's exact event"
+             (handler-case
+                 (progn (%recursive-search-experience (obj "event_id" 77002)) nil)
+               (error () t)))
+  (crm-check "experience search time page is bounded and source-addressed"
+             (let* ((page (shasht:read-json
+                           (%recursive-search-experience
+                            (obj "from_unix" 0 "to_unix" 4102444800 "limit" 1))))
+                    (row (aref (gethash "results" page) 0)))
+               (and (eql 1 (gethash "scanned" page))
+                    (eql 77001 (gethash "source_id" row)))))
+  (crm-check "experience search rejects mixed exact and time arguments"
+             (handler-case
+                 (progn (%recursive-experience-arguments
+                         (obj "event_id" 77001 "hours" 24)) nil)
+               (error () t))))
+
+(let* ((earlier (crm-event 77101 "user-message"
+                           (obj "channel" "terminal"
+                                "metadata" (obj "persona_id" "fixture"))))
+       (receipt (crm-event 77102 "recursive-tool-result"
+                           (obj "tool_name" "bash" "content" "Synthetic test failed"
+                                "execution_status" "executed") 77101))
+       (current (crm-event 77103 "user-message"
+                           (obj "channel" "terminal"
+                                "metadata" (obj "persona_id" "fixture"))))
+       (spec (obj "sections"
+                  (obj "conversation-evidence" (vector (%conversation-record 77101 "Earlier"))
+                       "untrusted-tool-results" #())
+                  "section_character_budgets" (obj "untrusted-tool-results" 100)
+                  "total_character_budget" 1000
+                  "eligible_evidence_ids" #(77101))))
+  (setf (gethash "timestamp" earlier) "2026-09-21T12:00:00Z"
+        (gethash "timestamp" receipt) "2026-09-21T12:00:01Z"
+        (gethash "timestamp" current) "2026-09-21T12:10:00Z")
+  (let* ((records (%recursive-recent-activity-records
+                   (list earlier receipt current) spec 77103))
+         (body (and (plusp (length records))
+                    (shasht:read-json (gethash "content" (aref records 0))))))
+    (crm-check "recent same-path tool evidence retains original event link"
+               (and (= 1 (length records))
+                    (= 77102 (gethash "source_id" (aref records 0)))
+                    (search "Synthetic test failed" (gethash "content" body))
+                    (search "not included" (gethash "arguments_status" body))))
+    (let ((*event-authority-port*
+            (list :read-event
+                  (lambda (id type)
+                    (find-if (lambda (event)
+                               (and (equal id (gethash "id" event))
+                                    (equal type (gethash "type" event))))
+                             (list earlier receipt current)))
+                  :root-recent
+                  (lambda (root types limit before)
+                    (declare (ignore limit))
+                    (if (and (equal root 77101)
+                             (member "recursive-tool-result" types
+                                     :test #'equal)
+                             (equal before 77103))
+                        (list receipt) nil)))))
+      (crm-check "indexed recent tool evidence matches scoped list projection"
+                 (equalp records
+                         (%recursive-recent-activity-records-indexed
+                          spec 77103)))
+      (let ((section (gethash "sections" spec)))
+        (setf (gethash "conversation-evidence" section)
+              (make-array 100 :initial-element
+                          (%conversation-record 77101 "Earlier")))
+        (crm-check "indexed receipt read accepts configured 100-event history"
+                   (equalp records
+                           (%recursive-recent-activity-records-indexed
+                            spec 77103)))
+        (setf (gethash "conversation-evidence" section)
+              (make-array 129 :initial-element
+                          (%conversation-record 77101 "Earlier")))
+        (crm-check "indexed receipt read refuses over-profile history"
+                   (handler-case
+                       (progn
+                         (%recursive-recent-activity-records-indexed
+                          spec 77103)
+                         nil)
+                     (error () t))))))
+  (setf (gethash "channel" (gethash "payload" earlier)) "other")
+  (crm-check "recent tool evidence does not cross conversation channel"
+             (zerop (length (%recursive-recent-activity-records
+                             (list earlier receipt current) spec 77103)))))
 
 (format t "~%Durable recursive mind: ~d passed, ~d failed~%"
         *crm-pass* *crm-fail*)

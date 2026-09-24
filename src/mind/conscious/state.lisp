@@ -96,7 +96,10 @@ ordered so the projection is stable."
                                             context pulse-in-flight
                                             (secondary-bound *conscious-secondary-bound*)
                                             (soft-bound *inbox-soft-bound*)
-                                            (hard-bound *inbox-hard-bound*))
+                                            (hard-bound *inbox-hard-bound*)
+                                            (inbox-projection nil inbox-supplied-p)
+                                            (committed-pulse-sequence nil
+                                             sequence-supplied-p))
   "Fold EVENTS into a bounded conscious state.
 
 Pure and total: the same events with the same NOW always produce the same
@@ -104,9 +107,21 @@ state, and no input is mutated. This is what makes exact rebuild possible --
 there is no hidden accumulator, so replaying the log reconstructs the state
 rather than approximating it.
 
+An indexed-state caller may provide both INBOX-PROJECTION and
+COMMITTED-PULSE-SEQUENCE instead of EVENTS. Supplying only one is invalid;
+the caller is responsible for proving that both are from the same sealed
+authority frontier. This separates policy/time evaluation from event folding.
+
 STATE_REVISION is monotonic in the highest observed event id, so a later
 projection over a superset of events never reports an earlier revision. It is
 distinct from CONSUMPTION_WATERMARK, which advances only on acknowledgement."
+  (unless (eq inbox-supplied-p sequence-supplied-p)
+    (error "Conscious state requires inbox and pulse sequence from one source"))
+  (when (and inbox-supplied-p
+             (not (and (hash-table-p inbox-projection)
+                       (integerp committed-pulse-sequence)
+                       (not (minusp committed-pulse-sequence)))))
+    (error "Conscious indexed inputs are invalid"))
   (let* ((ctx (if (projection-context-p context)
                   context
                   (make-projection-context
@@ -114,11 +129,28 @@ distinct from CONSUMPTION_WATERMARK, which advances only on acknowledgement."
                    :soft-bound (or soft-bound *inbox-soft-bound*)
                    :hard-bound (or hard-bound *inbox-hard-bound*)
                    :secondary-bound (or secondary-bound *conscious-secondary-bound*))))
+         (expected-composition (projection-context-hash ctx))
          (now (let ((v (gethash "now" ctx))) (if (eq v :null) nil v)))
          (current-revision (let ((v (gethash "runtime_revision" ctx)))
                              (if (eq v :null) nil v)))
          (secondary-bound (gethash "secondary" (gethash "bounds" ctx)))
-         (inbox (inbox-project events :context ctx))
+         (inbox
+           (if inbox-supplied-p
+               (progn
+                 (unless (and (eql *inbox-schema-version*
+                                   (gethash "schema_version" inbox-projection))
+                              (equal expected-composition
+                                     (gethash "composition_hash"
+                                              inbox-projection))
+                              (equal (gethash "now" ctx)
+                                     (gethash "evaluated_at" inbox-projection))
+                              (equal (gethash "agent_id" ctx)
+                                     (gethash "agent_id" inbox-projection))
+                              (equal (gethash "consumer" ctx)
+                                     (gethash "consumer" inbox-projection)))
+                   (error "Conscious indexed inbox belongs to another projection context"))
+                 inbox-projection)
+               (inbox-project events :context ctx)))
          (decision (attention-decide inbox :context ctx :now now
                                            :pulse-in-flight pulse-in-flight))
          (admitted (coerce (gethash "admitted" inbox) 'list))
@@ -159,22 +191,24 @@ distinct from CONSUMPTION_WATERMARK, which advances only on acknowledgement."
      "observation_revision" (let ((h (gethash "highest_event_id" inbox)))
                               (if (numberp h) h 0))
      "state_revision"
-     (let ((latest 0))
-       (map nil
-            (lambda (event)
-              (when (and (hash-table-p event)
-                         (equal "pulse-committed" (gethash "type" event)))
-                (let* ((payload (gethash "payload" event))
-                       (sequence (and (hash-table-p payload)
-                                      (gethash "pulse_sequence" payload))))
-                  (when (and (integerp sequence) (plusp sequence)
-                             (> sequence latest))
-                    (setf latest sequence)))))
-            events)
-       latest)
+     (if sequence-supplied-p
+         committed-pulse-sequence
+         (let ((latest 0))
+           (map nil
+                (lambda (event)
+                  (when (and (hash-table-p event)
+                             (equal "pulse-committed" (gethash "type" event)))
+                    (let* ((payload (gethash "payload" event))
+                           (sequence (and (hash-table-p payload)
+                                          (gethash "pulse_sequence" payload))))
+                      (when (and (integerp sequence) (plusp sequence)
+                                 (> sequence latest))
+                        (setf latest sequence)))))
+                events)
+           latest))
      "consumption_watermark" watermark
      "runtime_revision" (or current-revision :null)
-     "composition_hash" (projection-context-hash ctx)
+     "composition_hash" expected-composition
      "evaluated_at" (or now :null)
 
      "focus"

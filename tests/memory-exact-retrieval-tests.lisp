@@ -112,9 +112,9 @@
                        :profile "all-vectors-v1" :limit 4))
                (report (memory-storage-exact-search backend query))
                (results (gethash "results" report)))
-          (mer-check "first exact read builds one generation-bound cache"
-                     (and (= 1 (%sqlite-derived-exact-cache-builds backend))
-                          (= 0 (%sqlite-derived-exact-cache-hits backend))))
+          (mer-check "first exact read retains verification but no collection cache"
+                     (and (%sqlite-derived-verified-memory-seal backend)
+                          (not (slot-exists-p backend 'exact-memory-cache))))
           (mer-check "pgvector binary floats decode without decimal drift"
                      (equalp #(1.0 0.0)
                              (memory-exact-query-vector query)))
@@ -146,8 +146,8 @@
                             (loop for row across (gethash "results" turn)
                                   collect (gethash "id" row))))
           (mer-check "unchanged exact reads reuse the verified generation"
-                     (and (= 1 (%sqlite-derived-exact-cache-builds backend))
-                          (= 2 (%sqlite-derived-exact-cache-hits backend)))))
+                     (and (%sqlite-derived-verified-memory-seal backend)
+                          (not (slot-exists-p backend 'exact-memory-cache)))))
         (let* ((with-vector
                  (memory-storage-exact-search
                   backend
@@ -172,7 +172,7 @@
                                  (aref (gethash "results" again) 0)))
                  (fresh-row (gethash "row"
                                      (aref (gethash "results" again) 0))))
-            (mer-check "returned rows and vectors cannot mutate cached state"
+            (mer-check "returned rows and vectors cannot mutate stored state"
                        (and (= 1.0 (aref fresh 0))
                             (not (string= "caller mutation"
                                           (gethash "content" fresh-row)))))))

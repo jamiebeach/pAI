@@ -81,6 +81,22 @@
                           (shasht:write-json
                            (conscious-lifecycle-project events :agent-id "q5-dev")
                            nil)))
+      (clt-check "incremental fold resolves sources without a retained seen map"
+                 (let ((fold (%make-lifecycle-fold "q5-dev"))
+                       (prior '()))
+                   (dolist (event events)
+                     (%lifecycle-fold-apply
+                      fold event :record-seen-p nil
+                      :source-event-before-p
+                      (lambda (source-id)
+                        (find source-id prior :key (lambda (item)
+                                                     (gethash "id" item)))))
+                     (push event prior))
+                   (and (zerop (hash-table-count
+                                (%lifecycle-fold-seen-event-ids fold)))
+                        (string= (shasht:write-json projection nil)
+                                 (shasht:write-json
+                                  (%lifecycle-fold-report fold) nil)))))
       (clt-check "awaiting references are bounded and content-free"
                  (let* ((awaiting (conscious-lifecycle-awaiting projection))
                         (row (and (= 1 (length awaiting)) (aref awaiting 0)))

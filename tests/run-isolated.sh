@@ -73,7 +73,7 @@ for suite in "$ROOT"/tests/$GLOB; do
     err=$((err + 1)); err_names="$err_names $name"
     reason=$(printf '%s\n' "$out" | grep -oE 'HARNESS-ERR: .{0,70}' | tail -1)
     printf 'ERR   %-52s %s\n' "$name" "${reason:-harness aborted; exit $status}"
-  elif printf '%s\n' "$out" | grep -qE '^[[:space:]]*(FAIL|[A-Z0-9_]+_FAIL)([[:space:]:]|$)|(^|[^0-9])[1-9][0-9]* failed'; then
+  elif printf '%s\n' "$out" | grep -qE '^[[:space:]]*(FAIL|[A-Z0-9_]+_FAIL)([[:space:]:]|$)|(^|[^0-9/])[1-9][0-9]* failed'; then
     fail=$((fail + 1)); failed_names="$failed_names $name"
     printf 'FAIL  %-52s %s\n' "$name" 'failure reported in suite output'
     printf '%s\n' "$out" | grep -E '^[[:space:]]*FAIL|[0-9]+ failed' | sed 's/^/        /'

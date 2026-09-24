@@ -95,6 +95,7 @@
     register({id:'graph', label:'Graph Explorer', href:'/graph', current:path === '/graph'});
     register({id:'observability', label:'Observability', href:'/dashboard', current:path === '/dashboard'});
     register({id:'settings', label:'Settings', href:'/settings', current:path === '/settings'});
+    register({id:'board', label:'Board', href:'/board-view', current:path === '/board-view'});
     window.dispatchEvent(new CustomEvent('pai-shell-ready'));
   }
 

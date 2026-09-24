@@ -152,6 +152,8 @@ class PaiCliRecursiveToolTests(unittest.TestCase):
                     "PAI_PRIVATE_BUDGET_PERCENT": "30",
                     "PAI_CONTEXT_TRACE": "metadata",
                     "PAI_CONTEXT_TRACE_DIR": "/private/context-traces",
+                    "PAI_FLEET_OWN_ADDRESS": "fixture-host.example.ts.net:8443",
+                    "PAI_FLEET_OWN_NAME": "FixtureAgent",
                 },
                 tool_environment,
             )
@@ -212,6 +214,15 @@ class PaiCliRecursiveToolTests(unittest.TestCase):
             self.assertEqual(
                 restricted["PAI_CONTEXT_TRACE_DIR"], "/private/context-traces"
             )
+            # Confirmed live: without these two, every /fleet-request and
+            # /fleet-approve failed on any instance launched with
+            # --recursive-tools -- the value reached this process's own
+            # environment fine and was silently dropped right here.
+            self.assertEqual(
+                restricted["PAI_FLEET_OWN_ADDRESS"],
+                "fixture-host.example.ts.net:8443",
+            )
+            self.assertEqual(restricted["PAI_FLEET_OWN_NAME"], "FixtureAgent")
             self.assertEqual(
                 restricted["OPENROUTER_API_KEY"], "admitted-openrouter-key"
             )

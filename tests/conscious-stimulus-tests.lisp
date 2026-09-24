@@ -38,6 +38,20 @@
 (stim-check "a non-hash-table input is refused"
             (null (stimulus-from-event "not-an-event")))
 
+(let ((stimulus (stimulus-from-event
+                 (stim-event "agent-stimulus-received"
+                             :payload (obj "source" "document-change"
+                                           "text" "A synthetic document changed.")))))
+  (stim-check "generic adapter experience is admitted as private external content"
+              (and (equal "environment-change" (gethash "kind" stimulus))
+                   (equal "private" (gethash "audience" stimulus))
+                   (equal "external-content" (gethash "trust" stimulus)))))
+(dolist (type '("recursive-activity-opened" "recursive-private-opportunity-selected"
+                "recursive-stimulus-result" "recursive-stimulus-disposition"
+                "recursive-stimulus-retry-opened"))
+  (stim-check "stimulus execution bookkeeping cannot wake itself"
+              (null (stimulus-from-event (stim-event type)))))
+
 (format t "~%== envelope completeness ==~%")
 
 ;; Every field the frozen schema names must be PRESENT, even when the legacy
@@ -455,7 +469,8 @@
                                                "intention-cue" "project-change"
                                                "prediction-due" "runtime-health"
                                                "cancellation" "operator-control"
-                                               "self-mod-result")
+                                               "self-mod-result" "peer-message"
+                                               "environment-change")
                                          :test #'string=))
                    (stimulus-kinds)))
 

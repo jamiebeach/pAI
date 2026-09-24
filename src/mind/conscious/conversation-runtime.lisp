@@ -350,6 +350,7 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
                    (and (integerp token-budget) (plusp token-budget))))
     (error "Conversation history token bounds are invalid"))
   (let ((candidates nil)
+        (turn-roots (make-hash-table :test #'equal))
         (completed-recursive-roots
           (loop for event in (%conversation-items events)
                 for payload = (and (hash-table-p event)
@@ -390,8 +391,7 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
                    (or (null before-event-id)
                        (and (numberp id) (< id before-event-id)))
                    text)
-          (let* ((bounded (if (> (length text) event-character-limit)
-                              (subseq text 0 event-character-limit) text))
+          (let* ((bounded text)
                  (failed-root-p
                    (and (string= type "user-message")
                         (not (member id completed-recursive-roots :test #'equal))
@@ -414,15 +414,32 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
                          (error () ""))
                        ""))
                  (rendered (format nil "~a~a: ~a" prefix speaker bounded)))
+            (setf (gethash id turn-roots)
+                  (if (and (string= type "agent-message")
+                           (integerp (gethash "caused_by" event)))
+                      (gethash "caused_by" event) id))
             (push (obj "source_id" id "content" rendered) candidates)))))
     ;; NREVERSE is destructive: retain its returned head before measuring.
     ;; Measuring the old head in the same form sees only its new one-cell tail.
     (setf candidates (nreverse candidates))
     (let* ((candidate-count (length candidates))
-           (shape-omitted (max 0 (- candidate-count max-events))))
+           (shape-omitted (max 0 (- candidate-count (max 2 max-events)))))
       (setf candidates
-            (last candidates (min max-events candidate-count)))
-      (let ((used 0) (estimated-tokens 0) (selected nil))
+            (last candidates (min (max 2 max-events) candidate-count)))
+      (let* ((newest-root (and candidates
+                               (gethash (gethash "source_id" (car (last candidates)))
+                                        turn-roots)))
+             (required-count
+               (count newest-root candidates :test #'equal
+                      :key (lambda (row)
+                             (gethash (gethash "source_id" row) turn-roots))))
+             (required-size
+               (loop for row in candidates
+                     when (equal newest-root
+                                 (gethash (gethash "source_id" row) turn-roots))
+                       sum (length (gethash "content" row))))
+             (effective-budget (max character-budget (+ required-size 200)))
+             (used 0) (estimated-tokens 0) (selected nil))
       (dolist (record (reverse candidates))
         (let* ((content (gethash "content" record))
                (size (length content))
@@ -430,8 +447,9 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
                  (if (fboundp 'conversation-text-estimated-tokens)
                      (conversation-text-estimated-tokens content)
                      (ceiling size 4)))
-               (floor-p (< (length selected) minimum-recent-events))
-               (fits-characters (<= (+ used size) character-budget))
+               (floor-p (< (length selected)
+                           (max required-count minimum-recent-events)))
+               (fits-characters (<= (+ used size) effective-budget))
                (fits-tokens
                  (or floor-p (null token-budget)
                      (<= (+ estimated-tokens tokens) token-budget))))
@@ -443,6 +461,15 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
               ;; Dialogue context is a contiguous newest-first tail. Once an
               ;; older row cannot fit, even smaller earlier rows stay omitted.
               (return))))
+        ;; An older answer without its initiating question is misleading.
+        (when (and selected
+                   (not (equal newest-root
+                               (gethash (gethash "source_id" (first selected))
+                                        turn-roots)))
+                   (not (equal (gethash "source_id" (first selected))
+                               (gethash (gethash "source_id" (first selected))
+                                        turn-roots))))
+          (pop selected))
         (let* ((omitted (+ shape-omitted
                            (- (length candidates) (length selected))))
                (degraded-p (plusp omitted)))
@@ -464,8 +491,13 @@ allows expanded JSON replay objects to be reclaimed before the next turn."
                 "record_count" (length selected)
                 "omitted_record_count" omitted
                 "degraded" (if degraded-p t nil)
-                "rendered_characters" used
-                "estimated_tokens" estimated-tokens
+                "rendered_characters"
+                (loop for row in selected sum (length (gethash "content" row)))
+                "truncated_record_count" 0
+                "required_recent_record_count" required-count
+                "estimated_tokens"
+                (loop for row in selected
+                      sum (ceiling (length (gethash "content" row)) 4))
                 "token_budget" (or token-budget :null)
                 "minimum_recent_events" minimum-recent-events)))))))
 
@@ -1320,10 +1352,20 @@ so forwarding those transport labels would violate its closed row schema."
          (semantic-memory-ids (or (second memory-selection) nil))
          (memory-report (or (third memory-selection) (obj)))
          (semantic-memory-metadata (or (fourth memory-selection) (vector)))
+         (episodic-input
+           (or episodic-events
+               (if (and (boundp '*conscious-recursive-mind-episodic-memory-enabled-p*)
+                        (symbol-value
+                         '*conscious-recursive-mind-episodic-memory-enabled-p*)
+                        *event-authority-port*
+                        (functionp
+                         (getf *event-authority-port* :episodic-events)))
+                   (event-episodic-context-events user-event-id)
+                   events)))
          (episodic-selection
            (multiple-value-list
             (%conversation-episodic-context-records
-             (or episodic-events events) prompt budget provider-class
+             episodic-input prompt budget provider-class
              (gethash "persona_id" persona))))
          (episodic-records (or (first episodic-selection) (vector)))
          (episodic-ids (or (second episodic-selection) nil))
@@ -1475,6 +1517,26 @@ so forwarding those transport labels would violate its closed row schema."
            (if (gethash "non_exhaustive" recall-selection-report) t nil)
           *conscious-conversation-turn-memory-report* memory-report
           *conscious-conversation-turn-history-report* history-report)
+    ;; Reserve selected complete history through the final assembly budget.
+    ;; Detach the policy tables so this turn cannot mutate shared defaults.
+    (let ((copy (make-hash-table :test #'equal))
+          (sections (make-hash-table :test #'equal)))
+      (maphash (lambda (key value) (setf (gethash key copy) value)) budget)
+      (maphash (lambda (key value) (setf (gethash key sections) value))
+               (gethash "section_character_budgets" budget))
+      (let* ((size (gethash "rendered_characters" history-report 0))
+             (extra (max 0 (- size (gethash "conversation-evidence" sections 0)))))
+        (incf (gethash "total_character_budget" copy) extra)
+        (setf (gethash "total_character_budget" copy)
+              (max (gethash "total_character_budget" copy)
+                   (+ size (loop for name in '("identity-instructions" "sensorium"
+                                               "focus-lifecycles" "triggering-stimuli"
+                                               "publication-constraints")
+                                 sum (gethash name sections 0)))))
+        (setf (gethash "conversation-evidence" sections)
+              (max size (gethash "conversation-evidence" sections 0))))
+      (setf (gethash "section_character_budgets" copy) sections
+            budget copy))
     (obj
      "audience" "operator"
      "total_character_budget" (gethash "total_character_budget" budget)

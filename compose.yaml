@@ -69,6 +69,15 @@ services:
       # PAI_PROVIDER_CALL_TIMEOUT_SECONDS at launch, or (preferred, live,
       # no restart) the durable "/config-set provider_call_timeout_seconds
       # <seconds>" setting, which wins over any launch-time value.
+      #
+      # Fleet peer-to-peer (docs/FLEET_DESIGN.md). PAI_FLEET_OWN_ADDRESS
+      # cannot be inferred -- it's this agent's own externally-reachable
+      # address as another agent would dial it (a Tailscale Serve
+      # hostname:port here, not anything this container can see about
+      # itself). PAI_FLEET_OWN_NAME is optional; unset falls back to
+      # PAI_CONVERSATION_PERSONA.
+      PAI_FLEET_OWN_ADDRESS: ${PAI_FLEET_OWN_ADDRESS:-}
+      PAI_FLEET_OWN_NAME: ${PAI_FLEET_OWN_NAME:-}
     ports:
       - "127.0.0.1:${PAI_WEB_PORT:-8080}:${PAI_WEB_PORT:-8080}"
     extra_hosts:

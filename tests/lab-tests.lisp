@@ -59,6 +59,32 @@
  "production-compatible embedding policy retains bounded fallback"
  (let ((*embedding-fallback-policy* :allow))
    (= 768 (length (%embedding-fallback "query" "fixture outage")))))
+(pai-lab-test-check
+ "embedding input is bounded by encoded bytes"
+ (let* ((*ollama-embedding-input-byte-limit* 8)
+        (bounded (%embedding-bounded-text "abcdefghijkl")))
+   (and (string= "abcdefgh" bounded)
+        (= 8 (length (babel:string-to-octets bounded :encoding :utf-8))))))
+(pai-lab-test-check
+ "embedding byte bound never splits a multibyte character"
+ (let* ((*ollama-embedding-input-byte-limit* 5)
+        (bounded (%embedding-bounded-text "éééé")))
+   (and (string= "éé" bounded)
+        (= 4 (length (babel:string-to-octets bounded :encoding :utf-8))))))
+(pai-lab-test-check
+ "embedding boundary preserves short text and rejects invalid limits"
+ (and (let* ((*ollama-embedding-input-byte-limit* 8)
+             (text "éé"))
+        (eq text (%embedding-bounded-text text)))
+      (let ((*ollama-embedding-input-byte-limit* 0))
+        (handler-case (progn (%embedding-bounded-text "abc") nil)
+          (error () t)))))
+(pai-lab-test-check
+ "batch task prefix is counted inside the embedding byte envelope"
+ (let* ((*ollama-embedding-input-byte-limit* 19)
+        (bounded (%embedding-bounded-text "search_document: éé")))
+   (and (string= "search_document: é" bounded)
+        (= 19 (length (babel:string-to-octets bounded :encoding :utf-8))))))
 
 ;;; --- embedding retry, backoff, and circuit breaker ----------------------
 

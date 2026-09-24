@@ -22,8 +22,13 @@
 
 (load (test-source "replay-capsules.lisp"))
 
-(setf *replay-capsule-file* #P"/tmp/replay-capsules-a3-test.json"
-      *replay-capsule-fixture-root* #P"/tmp/replay-capsule-fixtures/")
+(setf *replay-capsule-file*
+      (merge-pathnames "replay-capsules-a3-test.json" (test-state-dir))
+      *replay-capsule-fixture-root*
+      (merge-pathnames "replay-capsule-fixtures/" (test-state-dir)))
+(let ((fixture (merge-pathnames "captured-case.json"
+                                *replay-capsule-fixture-root*)))
+  (when (probe-file fixture) (delete-file fixture)))
 
 (defun replay-test-reset ()
   (ignore-errors (delete-file *replay-capsule-file*))
@@ -259,7 +264,8 @@
        (path (replay-capsule-extract-fixture id "captured-case"))
        (text (uiop:read-file-string path)))
   (replay-test-check "fixture extraction stays in fixed root"
-                     (search "/tmp/replay-capsule-fixtures/" (namestring path)))
+                     (search (namestring *replay-capsule-fixture-root*)
+                             (namestring path)))
   (replay-test-check "fixture declares captured provenance"
                      (search "captured-production-event" text)))
 

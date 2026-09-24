@@ -16,8 +16,10 @@
                         (<= *heap-health-interval-seconds* 60))
 (heap-health-test-check "incident guard samples every five seconds"
                         (= 5 *heap-health-interval-seconds*))
-(heap-health-test-check "incident guard starts full GC with promotion headroom"
+(heap-health-test-check "incident guard observes pressure with promotion headroom"
                         (= 0.30d0 *heap-health-warning-ratio*))
+(heap-health-test-check "critical autonomy guard starts before heap exhaustion"
+                        (= 0.65d0 *heap-health-critical-ratio*))
 (heap-health-test-check "incident guard can recover a second burst promptly"
                         (= 30 *heap-health-full-gc-cooldown-seconds*))
 (heap-health-test-check "sample history retains at least one day"
@@ -41,8 +43,8 @@
     (heap-health-test-check "normal sample reports ok"
                             (string= "ok" (gethash "status" normal))))
   (setf usage 70)
-  (let ((recovered (heap-health-sample :now 2000)))
-    (heap-health-test-check "warning pressure forces one full GC" (= gc-count 1))
+  (let ((recovered (heap-health-sample :allow-gc t :now 2000)))
+    (heap-health-test-check "explicit diagnostic GC remains available" (= gc-count 1))
     (heap-health-test-check "post-GC recovery is distinguished"
                             (string= "recovered-after-gc"
                                      (gethash "status" recovered)))
@@ -53,6 +55,8 @@
         *autonomous-write-mode* :normal
         *heap-health-gc-fn* (lambda () (incf gc-count) (setf usage 85)))
   (let ((critical (heap-health-sample :now 3000)))
+    (heap-health-test-check "routine critical sample does not copy a replay generation"
+                            (= gc-count 1))
     (heap-health-test-check "retained critical heap is explicit"
                             (string= "critical" (gethash "status" critical)))
     (heap-health-test-check "critical retained heap pauses autonomy"

@@ -94,6 +94,9 @@
                   (search "agent-message" web)))
   (cir-check "canonical CLI waits through the same coordinator"
              (search "conscious-interaction-submit-and-wait" driver))
+  (cir-check "canonical CLI does not authorize full checkpoint rebuild at startup"
+             (and (search ":rebuild-stale-checkpoint-p nil" driver)
+                  (null (search ":rebuild-stale-checkpoint-p t" driver))))
   (cir-check "private cognition cannot own the operator progress slot"
              (search
               "(unless (string= \"private\" (gethash \"channel\" item \"\"))"

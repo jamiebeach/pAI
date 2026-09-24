@@ -268,14 +268,11 @@
                    (find "c" (gethash "results" report) :test #'string=
                          :key (lambda (item) (gethash "id" item)))))
             (memory-mutation-port-check
-             "validated node update advances the warm exact cache in place"
+             "validated node update is visible without a resident cache"
              (and candidate
                   (search "gamma revised"
                           (gethash "content" (gethash "row" candidate)))
-                  (= 1 (%sqlite-derived-exact-cache-builds backend))
-                  (= 1
-                     (%sqlite-derived-exact-cache-incremental-advances
-                      backend)))))
+                  (not (slot-exists-p backend 'exact-memory-cache)))))
           (let ((before (memory-storage-projection-report backend)))
             (let ((tampered
                     (memory-mutation-event
@@ -335,14 +332,11 @@
                    (find "d" (gethash "results" report) :test #'string=
                          :key (lambda (item) (gethash "id" item)))))
             (memory-mutation-port-check
-             "validated node upsert appends to the warm exact cache"
+             "validated node upsert is visible without a resident cache"
              (and candidate
                   (search "delta"
                           (gethash "content" (gethash "row" candidate)))
-                  (= 1 (%sqlite-derived-exact-cache-builds backend))
-                  (= 2
-                     (%sqlite-derived-exact-cache-incremental-advances
-                      backend)))))
+                  (not (slot-exists-p backend 'exact-memory-cache)))))
           (let* ((row "{\"id\":1,\"from_id\":\"a\",\"to_id\":\"b\",\"edge_type\":\"follows\"}")
                  (insert (%memory-storage-object
                           "operation" "insert" "mutation_kind" "fixture-edge"
@@ -356,13 +350,10 @@
             (memory-storage-apply-mutation
              backend (memory-mutation-event 15 15 "memory-edge-state" delete))
             (memory-mutation-port-check
-             "edge changes advance cache identity without rebuilding nodes"
+             "edge changes preserve the authoritative watermark without a cache"
              (and (= 15 (gethash "through_event_id"
                                  (memory-storage-projection-report backend)))
-                  (= 1 (%sqlite-derived-exact-cache-builds backend))
-                  (= 4
-                     (%sqlite-derived-exact-cache-incremental-advances
-                      backend)))))
+                  (not (slot-exists-p backend 'exact-memory-cache)))))
           (let ((invalid (%memory-storage-object
                           "operation" "insert" "mutation_kind" "fixture-edge"
                           "row_json"
@@ -421,11 +412,8 @@
           (make-memory-exact-query
            :vector-binary-hex (memory-mutation-vector 1 0)
            :profile "all-vectors-v1" :limit 2))
-         ;; An unexplained generation mismatch must never be advanced from a
-         ;; mutation payload that did not start at that exact cache identity.
-         (setf (%sqlite-exact-memory-cache-projection-position
-                (%sqlite-derived-exact-memory-cache backend))
-               9)
+         ;; A stale verification receipt cannot hide a committed mutation.
+         (setf (%sqlite-derived-verified-memory-seal backend) "stale-fixture")
          (memory-storage-apply-mutation
           backend
           (memory-mutation-event
@@ -433,17 +421,20 @@
            (memory-mutation-payload-node "c" "gamma" "upsert")
            "ledger-fallback"))
          (memory-mutation-port-check
-          "stale exact cache falls back to a full verified rebuild"
-          (and (null (%sqlite-derived-exact-memory-cache backend))
-               (= 1 (%sqlite-derived-exact-cache-incremental-fallbacks backend))))
-         (memory-storage-exact-search
-          backend
-          (make-memory-exact-query
-           :vector-binary-hex (memory-mutation-vector 1 0)
-           :profile "all-vectors-v1" :limit 3))
-         (memory-mutation-port-check
-          "fallback rebuild restores the authoritative mutation"
-          (= 2 (%sqlite-derived-exact-cache-builds backend))))
+          "mutation invalidates the small verification receipt"
+          (null (%sqlite-derived-verified-memory-seal backend)))
+         (let ((results
+                 (gethash "results"
+                          (memory-storage-exact-search
+                           backend
+                           (make-memory-exact-query
+                            :vector-binary-hex (memory-mutation-vector 1 0)
+                            :profile "all-vectors-v1" :limit 3 :hydrate-p t)))))
+           (memory-mutation-port-check
+            "next read sees authoritative mutation without rebuilding a cache"
+            (and (find "c" results :test #'string=
+                       :key (lambda (item) (gethash "id" item)))
+                 (%sqlite-derived-verified-memory-seal backend)))))
     (when backend (storage-close backend))
     (memory-mutation-delete-db database)))
 

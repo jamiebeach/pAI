@@ -300,12 +300,17 @@ from absent-because-unset."
          ;; v1-compatible default per the runtime spec. Not inferred from
          ;; content: audience is an authority-adjacent fact and a stimulus
          ;; must not be able to widen its own.
-         "audience"          "operator"
+         "audience"          (cond ((string= kind "environment-change") "private")
+                                   ((string= source "peer") "peer")
+                                   (t "operator"))
          "correlation_id"    correlation
          "causation_id"      (or (%stimulus-present (gethash "caused_by" event)) :null)
          "payload_ref"       (%stimulus-payload-ref payload event-id)
          ;; Trust is the SOURCE's status, never a judgement about content.
-         "trust"             (if (string= source "channel") "inbound-unverified" "internal")
+         "trust"             (cond ((string= kind "environment-change") "external-content")
+                                   ((string= source "peer") "authenticated-peer-content")
+                                   ((string= source "channel") "inbound-unverified")
+                                   (t "internal"))
          "grounding"         "event-log"
          "urgency_class"     urgency
          "expires_at"        :null

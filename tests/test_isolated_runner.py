@@ -28,6 +28,15 @@ class IsolatedRunnerTests(unittest.TestCase):
 
     def test_passing_tally(self): self.assertEqual(self.run_case('3 passed, 0 failed')[0],0)
     def test_failed_tally(self): self.assertNotEqual(self.run_case('3 passed, 1 failed')[0],0)
+    def test_provider_retry_fraction_is_not_a_failed_assertion_count(self):
+        self.assertEqual(self.run_case(
+            '[conversation] provider attempt 1/3 failed; retrying\n'
+            '[conversation] provider attempt 9/12 failed; retrying\n'
+            '169 passed, 0 failed')[0], 0)
+    def test_provider_retry_cannot_hide_a_real_earlier_failure(self):
+        self.assertNotEqual(self.run_case(
+            '[conversation] provider attempt 1/3 failed; retrying\n'
+            '10 passed, 2 failed\n169 passed, 0 failed')[0], 0)
     def test_failed_tally_with_deliberate_nonzero_exit_is_an_assertion_failure(self):
         code,text=self.run_case('3 passed, 1 failed',1)
         self.assertNotEqual(code,0); self.assertIn('FAIL ',text); self.assertNotIn('ERR ',text)

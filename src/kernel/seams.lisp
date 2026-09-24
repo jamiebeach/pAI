@@ -39,7 +39,7 @@
 (in-package :agent)
 
 (export '(define-seam register-layer unregister-layer
-          seam-layers seam-report seam-defined-p))
+          seam-layers seam-report seam-defined-p seam-has-layers-p))
 
 (defstruct (seam (:constructor %make-seam))
   name
@@ -54,6 +54,14 @@
    idiom's liveness unanswerable.")
 
 (defun seam-defined-p (name) (nth-value 1 (gethash name *seams*)))
+
+(defun seam-has-layers-p (name)
+  "True when NAME has at least one registered extension layer.
+The base implementation alone is deliberately not treated as an available
+adapter capability: bases commonly fail closed while a deployment decides
+which concrete authority ports to register."
+  (let ((seam (gethash name *seams*)))
+    (and seam (not (null (seam-layers seam))))))
 
 (defun %seam (name)
   (or (gethash name *seams*)

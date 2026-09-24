@@ -34,7 +34,8 @@
           :test #'string=))
 
 (defun %web-terminal-navigation-path-p (path)
-  (member path '("/" "/terminal" "/graph" "/dashboard" "/settings") :test #'string=))
+  (member path '("/" "/terminal" "/graph" "/dashboard" "/settings" "/board-view")
+          :test #'string=))
 
 (defun %web-authentication-failure ()
   (setf (hunchentoot:return-code*) 401)
@@ -72,6 +73,24 @@
                      (hunchentoot:cookie-in *web-session-cookie-name*
                                             request))))))
     (cond
+      ;; The join handshake (docs/FLEET_DESIGN.md S2.4) cannot be
+      ;; HMAC-gated -- no shared secret exists yet to sign with, that is
+      ;; the whole point. Checked before %WEB-FLEET-PATH-P, which would
+      ;; otherwise also match these two paths.
+      ((%web-fleet-unauthenticated-path-p path)
+       (call-next-method))
+      ;; Fleet paths (docs/FLEET_DESIGN.md S2.1) are peer-to-peer, not
+      ;; operator traffic: they authenticate with a per-peer HMAC signature
+      ;; instead, verified here, before ANY other branch. This must stay
+      ;; first -- a fleet path must never be reachable via a valid operator
+      ;; session cookie in place of a valid signature, and no operator-auth
+      ;; branch below should ever see a fleet path at all.
+      ((%web-fleet-path-p path)
+       (let ((*fleet-request-body* nil) (*fleet-request-peer* nil))
+         (declare (special *fleet-request-body* *fleet-request-peer*))
+         (if (%web-fleet-request-authorized-p request)
+             (call-next-method)
+             (%web-fleet-auth-failure))))
       (separate-auth
        (call-next-method))
       ((and authentication-required (not authenticated) (not pwa-public)

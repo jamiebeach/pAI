@@ -69,7 +69,7 @@
              (equal (namestring (pai-state-path "conversation-backups/"))
                     (namestring *conversation-backup-dir*)))
 
-(let* ((root #P"/tmp/r0c4-conversation-history/")
+(let* ((root (merge-pathnames "r0c4-conversation-history/" (test-state-dir)))
        (conversation (merge-pathnames "conversation.json" root))
        (rebuilt (merge-pathnames "rebuilt/conversation.json" root))
        (history
@@ -85,6 +85,8 @@
                           "arguments" "{\"value\":1}"))))
           (obj "role" "tool" "tool_call_id" "call-1"
                "content" "synthetic result"))))
+  (let ((ledger (merge-pathnames "roundtrip-events.jsonl" root)))
+    (when (probe-file ledger) (delete-file ledger)))
   (ensure-directories-exist conversation)
   (let ((*conversation-file* conversation))
     (%conv-persist-write history))

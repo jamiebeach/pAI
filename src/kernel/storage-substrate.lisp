@@ -5,10 +5,13 @@
 (export '(storage-backend storage-error storage-integrity-error
           storage-conflict-error storage-unavailable-error
           storage-capabilities storage-close storage-append-event storage-append-event-if-head
-          storage-read-event storage-scan-events storage-map-events
+          storage-read-event storage-read-event-before-position
+          storage-event-position
+          storage-scan-events storage-map-events
           storage-map-event-receipts
           storage-query-events storage-range-max-event-id
-          storage-recent-events storage-max-event-id storage-head-position
+          storage-recent-events storage-max-event-id
+          storage-max-event-id-through-position storage-head-position
           storage-authority-boundary
           storage-checkpoint-source-binding
           storage-publish-checkpoint storage-load-checkpoint))
@@ -47,6 +50,16 @@ not authorization: the caller must validate its policy against that exact head."
   (error 'storage-unavailable-error :operation :conditional-append
          :detail "backend does not support atomic conditional append"))
 (defgeneric storage-read-event (backend event-id &key agent-id event-type))
+(defgeneric storage-read-event-before-position
+    (backend agent-id event-id before-position)
+  (:documentation
+   "Return the newest verified same-agent occurrence of EVENT-ID strictly before
+physical BEFORE-POSITION, or NIL. Imported duplicate logical IDs remain distinct
+by physical position; this is a bounded authority read, not a replay."))
+(defgeneric storage-event-position (backend agent-id event-id)
+  (:documentation
+   "Return the unique physical position of one same-agent logical event ID,
+or NIL. Refuse imported duplicate IDs rather than guessing an as-of boundary."))
 (defgeneric storage-scan-events
     (backend &key agent-id after-id event-type limit))
 (defgeneric storage-map-events
@@ -80,6 +93,11 @@ independent of content filters."))
 (defgeneric storage-recent-events
     (backend event-types limit &key agent-id before-event-id))
 (defgeneric storage-max-event-id (backend &key agent-id))
+(defgeneric storage-max-event-id-through-position
+    (backend agent-id through-position)
+  (:documentation
+   "Return the greatest logical ID in a same-agent physical prefix. Unlike
+the last row's ID this remains correct for imported logical-ID rewinds."))
 (defgeneric storage-head-position (backend &key agent-id))
 (defgeneric storage-authority-boundary (backend &key agent-id)
   (:documentation
@@ -134,6 +152,25 @@ exact event database and durable watermark."))
    (ironclad:digest-sequence
     :sha256 (sb-ext:string-to-octets text :external-format :utf-8))))
 
+(defun %storage-sha256-string-parts (parts &key (chunk-size 65536))
+  "Hash strings as one UTF-8 sequence without materializing their concatenation."
+  (unless (and (integerp chunk-size) (plusp chunk-size))
+    (error 'storage-error :operation :integrity
+                          :detail "integrity hash chunk size must be positive"))
+  (let ((digest (ironclad:make-digest :sha256)))
+    (dolist (part parts)
+      (unless (stringp part)
+        (error 'storage-error :operation :integrity
+                              :detail "integrity hash parts must be strings"))
+      (loop for start from 0 below (length part) by chunk-size
+            for end = (min (length part) (+ start chunk-size))
+            do (ironclad:update-digest
+                digest
+                (sb-ext:string-to-octets
+                 part :external-format :utf-8 :start start :end end))))
+    (ironclad:byte-array-to-hex-string
+     (ironclad:produce-digest digest))))
+
 (defun %storage-checkpoint-integrity-input
     (projection-name agent-id through-event-id through-position projector-revision
      policy-revision state-json)
@@ -145,3 +182,15 @@ exact event database and durable watermark."))
                          (write-to-string through-position)
                          projector-revision policy-revision state-json))
       (format stream "~d:~a" (length value) value))))
+
+(defun %storage-checkpoint-integrity-sha256
+    (projection-name agent-id through-event-id through-position projector-revision
+     policy-revision state-json)
+  "Return the legacy checkpoint digest without constructing its full input string."
+  (let ((values (list projection-name agent-id
+                      (write-to-string through-event-id)
+                      (write-to-string through-position)
+                      projector-revision policy-revision state-json)))
+    (%storage-sha256-string-parts
+     (loop for value in values
+           append (list (write-to-string (length value)) ":" value)))))

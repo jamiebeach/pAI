@@ -268,8 +268,9 @@
 
 (setf *dash10-replay-calls* 0)
 (let ((history (%dashboard-observability-history-report 1)))
-  (dash10-check "observability history uses one bounded ledger replay"
-                (and (= 1 *dash10-replay-calls*)
+  (dash10-check "observability history uses bounded type batches"
+                (and (= (ceiling (length *dashboard-activity-event-types*)
+                                 *dashboard-event-query-type-limit*) *dash10-replay-calls*)
                      (vectorp (gethash "events" history))
                      (hash-table-p (gethash "activity" history)))))
 
@@ -290,6 +291,33 @@
                      (= 1 (gethash "tool_calls" bucket))
                      (= 1 (gethash "search-memory"
                                    (gethash "tool_usage" activity))))))
+
+(let* ((event (obj "id" 22 "type" "peer-message-received"
+                   "payload" (obj "sender_name" "Synthetic Peer" "thread_id" "fixture-thread"
+                                  "text" "Synthetic private body")))
+       (payload (gethash "payload" (%dashboard-event-project event))))
+  (dash10-check "peer history exposes provenance without message bodies"
+                (and (equal "Synthetic Peer" (gethash "sender_name" payload))
+                     (equal "fixture-thread" (gethash "thread_id" payload))
+                     (not (nth-value 1 (gethash "text" payload))))))
+
+(let ((original (symbol-function 'replay-events)) (calls nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function 'replay-events)
+               (lambda (&key from limit types)
+                 (declare (ignore from))
+                 (push types calls)
+                 (unless (and (<= (length types) 32) (= limit 2))
+                   (error "Unbounded dashboard query"))
+                 (list (obj "id" (length calls)))))
+         (let ((rows (%dashboard-replay-activity-events 0 :limit 2)))
+           (dash10-check "activity vocabulary is batched without duplicate type queries"
+                         (and (= 2 (length calls))
+                              (= (length (apply #'append calls))
+                                 (length (remove-duplicates (apply #'append calls) :test #'equal)))
+                              (equal '(1 2) (mapcar (lambda (row) (gethash "id" row)) rows))))))
+    (setf (symbol-function 'replay-events) original)))
 
 (format t "~%~a passed, ~a failed~%" *dash10-pass* *dash10-fail*)
 (when (plusp *dash10-fail*) (sb-ext:exit :code 1))

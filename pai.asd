@@ -121,10 +121,16 @@
    ;; Backend-neutral durable storage contract plus the first local adapter.
    ;; Both are inert at load: no database is opened until explicitly selected.
    (:file "src/kernel/storage-substrate")
+   (:file "src/kernel/activity-storage")
    (:file "src/adapters/sqlite/sqlite-storage")
+   (:file "src/adapters/sqlite/sqlite-activity-storage")
    ;; Rebuildable checkpoints and memory live outside the sacred event DB.
    ;; This adapter remains inert until an explicit path is opened.
    (:file "src/adapters/sqlite/sqlite-derived-storage")
+   (:file "src/adapters/sqlite/sqlite-recursive-hot-shadow")
+   (:file "src/adapters/sqlite/sqlite-attention-shadow")
+   (:file "src/adapters/sqlite/sqlite-conscious-pulse-state")
+   (:file "src/adapters/sqlite/sqlite-lifecycle-shadow")
    (:file "src/adapters/sqlite/sqlite-import")
    (:file "src/kernel/runtime-observer-registry")
    (:file "src/kernel/runtime-observer-audit")
@@ -290,10 +296,18 @@
      (:file "src/mind/conscious/knowledge-graph-search-tool")
      ;; Authenticated operator visualization consumes the same read-only KG3
      ;; port through a separately injected adapter.
-     (:file "src/adapters/web/web-graph-explorer")
+   (:file "src/adapters/web/web-graph-explorer")
+   (:file "src/mind/conscious/sustained-activity-context")
+   (:file "src/mind/conscious/working-context-summary")
    (:file "src/mind/conscious/conversation-runtime")
+   (:file "src/mind/conscious/sustained-activity-runtime")
    (:file "src/mind/conscious/recursive-mind-runtime")
+   (:file "src/mind/conscious/working-context-request")
+   (:file "src/mind/conscious/experience-search")
+   (:file "src/mind/conscious/stimulus-activity")
+   (:file "src/mind/conscious/sustained-activity-operator")
    (:file "src/mind/conscious/knowledge-graph-formation-adapter")
+   (:file "src/mind/conscious/reviewed-context-graph-storage")
    (:file "src/mind/conscious/context-graph-runtime-adapter")
    (:file "src/mind/conscious/context-graph-budget")
    (:file "src/mind/conscious/conversation-work-loop")
@@ -303,7 +317,22 @@
    (:file "src/mind/conscious/storage-projection")
    ;; Explicit single-authority bridge, installed only by an operator entry
    ;; point after migration/parity/checkpoint qualification.
-   (:file "src/adapters/sqlite/sqlite-event-authority")))
+   (:file "src/adapters/sqlite/sqlite-event-authority")
+   ;; Fleet peer-to-peer communication (docs/FLEET_DESIGN.md). Build-order
+   ;; step 1 only: identity and peer store persistence. Inert until a later
+   ;; step wires it into the web acceptor's dispatch and the stimulus loop.
+   (:file "src/mind/conscious/peer-receipt")
+   (:file "src/mind/fleet/package")
+   (:file "src/mind/fleet/identity")
+   (:file "src/mind/fleet/auth")
+   (:file "src/mind/fleet/join")
+   (:file "src/mind/fleet/board")
+   ;; Hunchentoot glue, referencing PAI.FLEET symbols -- must load after the
+   ;; package above. web.lisp's dispatch method (loaded much earlier) calls
+   ;; the plain :AGENT-package functions this file defines by name; that is
+   ;; a forward reference resolved at request-handling time, not load time,
+   ;; same as every other late-bound wrap chain in this codebase.
+   (:file "src/adapters/web/web-fleet")))
 
 (defsystem "pai/tests"
   :description "Deterministic suites. Flat until boot parity confirms the

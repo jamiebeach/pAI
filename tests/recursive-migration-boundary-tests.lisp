@@ -46,7 +46,14 @@
                      (mapcar (lambda (event) (gethash "id" event)) events)))
              (rmb-check
               "historical and destination recovery use separate authority reads"
-              (and (= 2 (length calls))
+              (and (= 3 (length calls))
+                   (find-if
+                    (lambda (call)
+                      (and (eql 100 (cdr call))
+                           (equal (append *conscious-recursive-terminal-event-types*
+                                          '("context-graph-update-proposed"))
+                                  (car call))))
+                    calls)
                    (find-if
                     (lambda (call)
                       (and (null (cdr call))

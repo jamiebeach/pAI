@@ -32,6 +32,26 @@
 (load (test-source "sqlite-storage.lisp"))
 
 (format t "~%== storage substrate contract ==~%")
+(let* ((state-json (concatenate 'string
+                                "{\"unicode\":\"café ☕\",\"padding\":\""
+                                (make-string 200000 :initial-element #\x)
+                                "\"}"))
+       (legacy (%storage-sha256
+                (%storage-checkpoint-integrity-input
+                 "projection" "agent" 42 43 "projector" "policy" state-json)))
+       (streamed (%storage-checkpoint-integrity-sha256
+                  "projection" "agent" 42 43 "projector" "policy" state-json)))
+  (storage-check "streamed checkpoint hashing preserves the legacy digest"
+                 (string= legacy streamed))
+  (storage-check "streamed UTF-8 chunks preserve the legacy digest at boundaries"
+                 (string= (%storage-sha256 (concatenate 'string "" state-json))
+                          (%storage-sha256-string-parts
+                           (list "" state-json) :chunk-size 7))))
+(storage-check "invalid integrity chunk size fails closed"
+               (storage-signals-p
+                'storage-error
+                (lambda () (%storage-sha256-string-parts (list "x")
+                                                          :chunk-size 0))))
 (storage-check "SQLite constructor is present"
                (fboundp 'make-sqlite-storage))
 
@@ -152,6 +172,13 @@
                                 (string= "i1" (aref (gethash "active"
                                                               (gethash "state" loaded))
                                                      0))))
+            (storage-check "published checkpoint keeps the legacy on-disk hash"
+                           (string=
+                            (gethash "integrity_hash" published)
+                            (%storage-sha256
+                             (%storage-checkpoint-integrity-input
+                              "conscious-state" "alpha" 2 2 "q5" "p1"
+                              (%storage-json state)))))
             (storage-check "checkpoint cannot move backwards"
                            (storage-signals-p
                             'storage-conflict-error

@@ -465,11 +465,11 @@
                         reasoning-override))
                 (when (and reasoning-effort
                            (plusp (length reasoning-effort)))
-                  (unless (and (string= reasoning-override "enabled")
-                               (member reasoning-effort
-                                       '("minimal" "low" "medium" "high"
-                                         "max")
-                                       :test #'string=))
+                  ;; The saved effort is valid even when reasoning is disabled;
+                  ;; only the enabled branch above applies it to the request.
+                  (unless (member reasoning-effort
+                                  '("minimal" "low" "medium" "high" "max")
+                                  :test #'string=)
                     (error "Invalid OpenRouter reasoning effort")))
                 selected)
               profile))))))
@@ -572,7 +572,15 @@ independently audited before the ledger baseline may consume it."
        :migrate-p
        (string= "1" (or (uiop:getenv "PAI_EVENT_STORAGE_MIGRATE") "0"))
        :initialize-p initialize-p
-       :rebuild-stale-checkpoint-p t)
+       ;; Live startup may restore a verified checkpoint and its tail. A stale
+       ;; composition needs explicit offline maintenance. Only the public
+       ;; instance launcher admits bounded recovery of an absent database;
+       ;; the normal live CLI retains its no-implicit-rebuild policy.
+       :rebuild-stale-checkpoint-p nil
+       :missing-derived-replay-max-head
+       (if (string= "1" (or (uiop:getenv "PAI_SMALL_INSTANCE_REBUILD") "0"))
+           10000
+           0))
     (declare (ignore backend))
     (setf *conversation-event-authority-receipt* receipt))
   (when initialize-p
@@ -1272,8 +1280,8 @@ metadata parser or asking the browser to understand runtime structures."
   (declare (ignore linked-source-ids linked-evidence-event-ids))
   (multiple-value-bind (event-backend derived-backend agent-id persona-id)
       (%conversation-episode-graph-partition)
-    (declare (ignore derived-backend))
-    (%conversation-call "conscious-context-graph-search" event-backend agent-id persona-id request)))
+    (%conversation-call "conscious-context-graph-search"
+                        event-backend agent-id persona-id request derived-backend)))
 
 (defun %conversation-knowledge-graph-search (request)
   "One current authority projection for native search and the graph explorer."
@@ -1283,19 +1291,17 @@ metadata parser or asking the browser to understand runtime structures."
   "Resolve one exact inference; the recursive tool records, but cannot apply, it."
   (multiple-value-bind (event-backend derived-backend agent-id persona-id)
       (%conversation-episode-graph-partition)
-    (declare (ignore derived-backend))
     (%conversation-call
      "conscious-context-graph-confirmation-candidate"
-     event-backend agent-id persona-id fact-id)))
+     event-backend agent-id persona-id fact-id derived-backend)))
 
 (defun %conversation-knowledge-graph-proposal-result (proposal-event-id)
   "Synchronize one append-only conversational proposal and return its outcome."
   (multiple-value-bind (event-backend derived-backend agent-id persona-id)
       (%conversation-episode-graph-partition)
-    (declare (ignore derived-backend))
     (%conversation-call
      "conscious-context-graph-proposal-result"
-     event-backend agent-id persona-id proposal-event-id)))
+     event-backend agent-id persona-id proposal-event-id derived-backend)))
 
 (defun %conversation-knowledge-graph-attention-context
     (frame semantic-candidates episode-candidates character-budget)
@@ -1303,9 +1309,9 @@ metadata parser or asking the browser to understand runtime structures."
   (declare (ignore semantic-candidates episode-candidates))
   (multiple-value-bind (event-backend derived-backend agent-id persona-id)
       (%conversation-episode-graph-partition)
-    (declare (ignore derived-backend))
     (%conversation-call "conscious-context-graph-attention-context"
-                        event-backend agent-id persona-id frame character-budget)))
+                        event-backend agent-id persona-id frame character-budget
+                        derived-backend)))
 
 (let ((endpoint (or (uiop:getenv "PAI_CONVERSATION_ENDPOINT") ""))
       (model (or (uiop:getenv "PAI_CONVERSATION_MODEL") ""))
@@ -1375,11 +1381,22 @@ metadata parser or asking the browser to understand runtime structures."
          #'%conversation-knowledge-graph-confirmation-candidate
          :graph-proposal-fn
          #'%conversation-knowledge-graph-proposal-result
+         :fleet-peers-fn (symbol-function (%conversation-symbol "fleet-peer-list"))
+         :fleet-message-fn (symbol-function (%conversation-symbol "fleet-board-post"))
+         :fleet-board-read-fn
+         (symbol-function (%conversation-symbol "fleet-board-read-or-list"))
+         :fleet-board-reply-fn
+         (symbol-function (%conversation-symbol "fleet-board-reply"))
+         :fleet-notification-flush-fn
+         (symbol-function (%conversation-symbol "fleet-board-notification-flush-one"))
          :finding-memory-fn
          (and (fboundp (%conversation-symbol "memory-write-node"))
               (symbol-function (%conversation-symbol "memory-write-node")))
          :private-budget-percent *conversation-private-budget-percent*
          :private-reasoning-effort *conversation-private-reasoning-effort*
+         :working-summary-backend
+         (symbol-value
+          (%conversation-symbol "*sqlite-event-authority-checkpoint-backend*"))
          :review-ready-fn
          (and (not *conversation-knowledge-graph-rebuild-only-p*)
               (plusp *conversation-curiosity-wake-seconds*)
@@ -1654,8 +1671,11 @@ metadata parser or asking the browser to understand runtime structures."
    "web-terminal-configure-submit"
    (if (string= *conversation-loop-mode* "recursive")
        (lambda (prompt channel)
-         (%conversation-call "conscious-recursive-mind-submit"
-                             prompt :channel channel))
+         (multiple-value-bind (backend ignored agent persona)
+             (%conversation-episode-graph-partition)
+           (declare (ignore ignored agent persona))
+           (%conversation-call "sustained-activity-operator-submit"
+                               backend prompt channel "operator:web")))
        (lambda (prompt channel)
          (let ((receipt
                  (%conversation-call "conscious-interaction-admit"
@@ -1744,6 +1764,12 @@ metadata parser or asking the browser to understand runtime structures."
     (error "Web operator commands require the recursive mind loop"))
   (let ((words (%conversation-web-command-words line)))
     (cond
+      ((and words (string-equal (first words) "/activity"))
+       (multiple-value-bind (backend ignored agent persona)
+           (%conversation-episode-graph-partition)
+         (declare (ignore ignored agent persona))
+         (%conversation-call "sustained-activity-operator-command"
+                             backend (rest words) "web" "operator:web")))
       ((and (= (length words) 1)
             (string-equal (first words) "/budget"))
        (%conversation-web-budget-text
@@ -1818,8 +1844,40 @@ metadata parser or asking the browser to understand runtime structures."
              "conscious-recursive-curiosity-supersede-finding"
              result-id reason)
             nil))))
+      ((and (= (length words) 2)
+            (string-equal (first words) "/fleet-request"))
+       (%conversation-call "fleet-request-peer" (second words)))
+      ((and (= (length words) 2)
+            (string-equal (first words) "/fleet")
+            (string-equal (second words) "pending"))
+       (%conversation-call "fleet-pending-requests"))
+      ((and (= (length words) 2)
+            (string-equal (first words) "/fleet")
+            (string-equal (second words) "peers"))
+       (%conversation-call "fleet-peer-list"))
+      ((and (= (length words) 3)
+            (string-equal (first words) "/fleet-approve"))
+       (%conversation-call "fleet-approve-request" (second words) (third words)))
+      ((and (= (length words) 2)
+            (string-equal (first words) "/board")
+            (string-equal (second words) "list"))
+       (%conversation-call "fleet-board-list"))
+      ((and (= (length words) 3)
+            (string-equal (first words) "/board")
+            (string-equal (second words) "read"))
+       (%conversation-call "fleet-board-read" (third words)))
+      ((and (>= (length words) 3)
+            (string-equal (first words) "/board")
+            (string-equal (second words) "post"))
+       (%conversation-call "fleet-board-post" (third words)
+                           (format nil "~{~a~^ ~}" (cdddr words))))
+      ((and (>= (length words) 3)
+            (string-equal (first words) "/board")
+            (string-equal (second words) "post-new"))
+       (%conversation-call "fleet-board-post" (third words)
+                           (format nil "~{~a~^ ~}" (cdddr words)) t))
       (t
-       (error "Unknown web command. Use /config, /config-set KEY VALUE, /affect-inspect, /curiosity-inspect [maximum], /curiosity-supersede RESULT-ID REASON, /graph-inspect, /graph-search QUERY, /budget, or /budget-add USD")))))
+       (error "Unknown web command. Use /config, /config-set KEY VALUE, /affect-inspect, /curiosity-inspect [maximum], /curiosity-supersede RESULT-ID REASON, /graph-inspect, /graph-search QUERY, /budget, /budget-add USD, /fleet-request HOST:PORT, /fleet pending, /fleet peers, /fleet-approve REQUESTER-ID CODE, /board list, /board read THREAD-ID, /board post PEER-ID TEXT, or /board post-new PEER-ID TEXT")))))
 
 (when (fboundp (%conversation-symbol "web-terminal-configure-command"))
   (%conversation-call "web-terminal-configure-command"
@@ -1831,6 +1889,11 @@ metadata parser or asking the browser to understand runtime structures."
                         (%conversation-knowledge-graph-search-storage
                          request #() #()))))
 
+(unless (string= (or (uiop:getenv "PAI_MIGRATION_ONLY") "") "1")
+  ;; Fleet identity persists independent of whether the web acceptor is
+  ;; enabled this run (docs/FLEET_DESIGN.md S2.3) -- only excluded from a
+  ;; migration-only run, which is not a normal boot.
+  (%conversation-call "web-fleet-init"))
 (when (and (not (string= (or (uiop:getenv "PAI_MIGRATION_ONLY") "") "1"))
            (string= (or (uiop:getenv "PAI_WEB_ENABLED") "") "1"))
   (let ((port (parse-integer (%conversation-required-env "PAI_WEB_PORT")))
@@ -1842,7 +1905,7 @@ metadata parser or asking the browser to understand runtime structures."
 (let ((storage (%conversation-call "event-authority-report")))
   (format t "~&Event storage: ~a (~a)~%"
           (gethash "database" storage) (gethash "authority" storage)))
-(format t "Derived storage: ~a (checkpoints and memory projections)~%"
+(format t "Derived storage: ~a (rebuildable projections)~%"
         (%conversation-required-env "PAI_DERIVED_STORAGE_DATABASE"))
 (when *conversation-memory-import-receipt*
   (format t "Memory import: ~a; nodes ~d; edges ~d~%"
@@ -1851,12 +1914,14 @@ metadata parser or asking the browser to understand runtime structures."
           (gethash "node_count" *conversation-memory-import-receipt*)
           (gethash "edge_count" *conversation-memory-import-receipt*)))
 (let ((receipt *conversation-event-authority-receipt*))
-  (format t "~&Event authority receipt: ~a; events ~d; maximum id ~a; checkpoint position ~d"
+  (format t "~&Event authority receipt: ~a; events ~d; maximum id ~a"
           (gethash "status" receipt)
           (gethash "event_count" receipt)
-          (gethash "maximum_event_id" receipt)
-          (gethash "through_storage_position"
-                   *conversation-event-checkpoint-receipt*))
+          (gethash "maximum_event_id" receipt))
+  (when *conversation-event-checkpoint-receipt*
+    (format t "; checkpoint position ~d"
+            (gethash "through_storage_position"
+                     *conversation-event-checkpoint-receipt*)))
   (when (member (gethash "status" receipt)
                 '("migrated" "migration-resumed") :test #'string=)
     (format t "; sources ~d; audit ~a; duplicate ids ~d; rewinds ~d"

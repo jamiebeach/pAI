@@ -120,6 +120,12 @@ buckets, L2-normalized. Degraded, not broken."
   "Consecutive failed embedding calls before the circuit opens.")
 (defparameter *embedding-degraded-cooldown-seconds* 60
   "How long the circuit stays open before another live attempt is tried.")
+(defparameter *ollama-embedding-input-byte-limit* 1800
+  "Maximum UTF-8 bytes sent for one embedding input.
+
+The deployed local model has a 2048-token context. Bounding bytes below that
+ceiling is tokenizer-independent. Retrieval owners should still supply a
+concise semantic focus; this is a defensive boundary for longer inputs.")
 
 (defvar *embedding-consecutive-failures* 0)
 (defvar *embedding-circuit-open-until* 0)
@@ -171,6 +177,26 @@ when it starts, not inferred later from poor recall."
         (format t "~&[memory-nodes] ~a, using fallback~%" reason)
         (%embed-word-overlap-fallback text))))
 
+(defun %embedding-bounded-text (text)
+  "Return the longest complete-character prefix of TEXT within the byte limit."
+  (unless (and (stringp text)
+               (integerp *ollama-embedding-input-byte-limit*)
+               (plusp *ollama-embedding-input-byte-limit*))
+    (error "Embedding input or byte limit is invalid"))
+  (labels ((byte-length (end)
+             (length (babel:string-to-octets
+                      text :end end :encoding :utf-8))))
+    (if (<= (byte-length (length text)) *ollama-embedding-input-byte-limit*)
+        text
+        (let ((low 0) (high (length text)))
+          (loop while (< low high) do
+            (let ((middle (ceiling (+ low high) 2)))
+              (if (<= (byte-length middle)
+                      *ollama-embedding-input-byte-limit*)
+                  (setf low middle)
+                  (setf high (1- middle)))))
+          (subseq text 0 low)))))
+
 (defun %embed-text-once (text)
   "One live embedding attempt. Returns (values vector nil) or (values nil reason)."
   (handler-case
@@ -178,7 +204,10 @@ when it starts, not inferred later from poor recall."
                     (dex:post *ollama-endpoint*
                               :headers '(("Content-Type" . "application/json"))
                               :connect-timeout *ollama-timeout* :read-timeout *ollama-timeout*
-                              :content (shasht:write-json (obj "model" *ollama-embed-model* "prompt" text) nil))))
+                              :content (shasht:write-json
+                                        (obj "model" *ollama-embed-model*
+                                             "prompt" (%embedding-bounded-text text))
+                                        nil))))
              (vec (gethash "embedding" resp)))
         (if (and (present-p vec) (plusp (length vec)))
             (values (coerce vec 'list) nil)
@@ -235,7 +264,9 @@ timeout on top of every retry, which stalls context assembly badly."
                        "input"
                        (coerce
                         (mapcar (lambda (text)
-                                  (format nil "search_document: ~a" (or text "")))
+                                  (%embedding-bounded-text
+                                   (format nil "search_document: ~a"
+                                           (or text ""))))
                                 batch)
                         'vector)))
          (response

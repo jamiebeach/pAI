@@ -24,14 +24,34 @@
 ;;;; Every entry needs a reason. The exclusions are the part worth reviewing:
 ;;;; each is a claim that the agent is not missing something.
 
-(:census-version 13
+(:census-version 20
  :spec-kinds ("user-message" "channel-state" "schedule-due" "timer"
               "tool-result" "tool-failure" "model-result" "model-failure"
               "memory-result" "intention-cue" "project-change"
               "prediction-due" "runtime-health" "cancellation"
-              "operator-control" "self-mod-result")
+              "operator-control" "self-mod-result" "environment-change")
  :entries
  (
+  (:type "peer-message-received" :class :stimulus :kind "environment-change"
+   :source "system" :urgency "background" :barrier t
+   :reason "authenticated local peer delivery is itself a retained private stimulus without inheriting operator authority; historical linked generic roots remain sole owners where present")
+  (:type "agent-stimulus-received" :class :stimulus :kind "environment-change"
+   :source "system" :urgency "background" :barrier t
+   :reason "retained adapter experience is eligible for private agent execution without inheriting operator authority")
+  (:type "recursive-stimulus-result" :class :journal :group "cognition"
+   :reason "durable private completion of an admitted stimulus root, not another stimulus")
+  (:type "recursive-activity-opened" :class :journal :group "cognition"
+   :reason "frozen bounded source membership for one private activity, not a new stimulus")
+  (:type "recursive-stimulus-disposition" :class :journal :group "cognition"
+   :reason "durable terminal interpretation of a completed retained stimulus, not a new stimulus")
+  (:type "recursive-private-opportunity-selected" :class :journal :group "cognition"
+   :reason "durable fairness choice between generic stimuli and ordinary private work; selection is not a new stimulus")
+  (:type "peer-board-notification-queued" :class :journal :group "fleet"
+   :reason "durable sender outbox entry for an authenticated board reply, not a new stimulus")
+  (:type "peer-board-notification-delivered" :class :journal :group "fleet"
+   :reason "transport receipt for one queued board notification, not new cognition")
+  (:type "peer-board-publication-intent" :class :journal :group "fleet"
+   :reason "frozen outbound board request and operation identity before transmission; recoverable effect evidence, not a stimulus")
   ;; ---------------------------------------------------------------- admitted
   (:type "user-message" :class :stimulus :kind "user-message"
    :source "channel" :urgency "interactive" :barrier t

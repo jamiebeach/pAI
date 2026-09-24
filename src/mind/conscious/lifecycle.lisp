@@ -6,7 +6,8 @@
 
 (in-package :agent)
 
-(export '(conscious-lifecycle-project conscious-lifecycle-current
+(export '(conscious-lifecycle-project conscious-lifecycle-shadow-step
+          conscious-lifecycle-current
           conscious-lifecycle-awaiting conscious-lifecycle-report
           conscious-lifecycle-transition-payload
           *conscious-lifecycle-schema-version*
@@ -33,13 +34,6 @@
 
 (defun %lifecycle-nullable-id-p (value)
   (or (eq value :null) (null value) (%lifecycle-present-id-p value)))
-
-(defun %lifecycle-source-reference-valid-p (payload seen-event-ids)
-  "A receipt is provenance only when its same-partition event preceded it."
-  (let ((source (gethash "source_event_id" payload)))
-    (or (null source)
-        (eq source :null)
-        (nth-value 1 (gethash source seen-event-ids)))))
 
 (defun %lifecycle-text-p (value maximum)
   (and (stringp value) (plusp (length value)) (<= (length value) maximum)))
@@ -225,65 +219,119 @@
                  (gethash lifecycle-id lifecycles) next)
            t))))))
 
+(defstruct (%lifecycle-fold (:constructor %make-lifecycle-fold (agent-id)))
+  agent-id
+  (lifecycles (make-hash-table :test #'equal))
+  (requests (make-hash-table :test #'equal))
+  (seen-event-ids (make-hash-table :test #'equal))
+  (invalid '())
+  (rejected 0)
+  (source-rejected 0)
+  (highest 0))
+
+(defun %lifecycle-fold-apply
+    (fold event &key source-event-before-p (record-seen-p t))
+  "Apply one ordered event. SOURCE-EVENT-BEFORE-P receives an event ID and
+answers from an external physical-frontier authority index when provided."
+  (when (and (hash-table-p event)
+             (equal (%lifecycle-fold-agent-id fold)
+                    (gethash "agent_id" event)))
+    (let* ((event-id (gethash "id" event))
+           (type (gethash "type" event))
+           (payload (gethash "payload" event))
+           (source (and (hash-table-p payload)
+                        (gethash "source_event_id" payload)))
+           (source-valid-p
+             (or (null source) (eq source :null)
+                 (if source-event-before-p
+                     (funcall source-event-before-p source)
+                     (nth-value 1
+                                (gethash source
+                                         (%lifecycle-fold-seen-event-ids fold)))))))
+      (when (and (integerp event-id)
+                 (> event-id (%lifecycle-fold-highest fold)))
+        (setf (%lifecycle-fold-highest fold) event-id))
+      (cond
+        ((equal type "conscious-lifecycle-transition")
+         (unless (and (%lifecycle-transition-payload-p payload)
+                      source-valid-p
+                      (%lifecycle-project-transition
+                       payload event-id (%lifecycle-fold-lifecycles fold)
+                       (%lifecycle-fold-requests fold)))
+           (push event-id (%lifecycle-fold-invalid fold))))
+        ((equal type "conscious-lifecycle-result-rejected")
+         (if (and (%lifecycle-rejection-payload-p payload) source-valid-p)
+             (incf (%lifecycle-fold-rejected fold))
+             (push event-id (%lifecycle-fold-invalid fold))))
+        ((equal type "conscious-lifecycle-source-rejected")
+         (if (and (%lifecycle-source-rejection-payload-p payload)
+                  (null (gethash (gethash "request_id" payload)
+                                 (%lifecycle-fold-requests fold)))
+                  source-valid-p)
+             (progn
+               (setf (gethash (gethash "request_id" payload)
+                              (%lifecycle-fold-requests fold)) event-id)
+               (incf (%lifecycle-fold-source-rejected fold)))
+             (push event-id (%lifecycle-fold-invalid fold)))))
+      (when (and record-seen-p (%lifecycle-present-id-p event-id))
+        (setf (gethash event-id (%lifecycle-fold-seen-event-ids fold)) t))))
+  fold)
+
+(defun %lifecycle-fold-report (fold)
+  (let ((active 0) (terminal 0))
+    (maphash
+     (lambda (id row)
+       (declare (ignore id))
+       (if (member (gethash "status" row)
+                   *conscious-lifecycle-terminal-statuses* :test #'string=)
+           (incf terminal)
+           (incf active)))
+     (%lifecycle-fold-lifecycles fold))
+    (obj "schema_version" *conscious-lifecycle-schema-version*
+         "agent_id" (or (%lifecycle-fold-agent-id fold) :null)
+         "highest_event_id" (%lifecycle-fold-highest fold)
+         "active_count" active "terminal_count" terminal
+         "invalid_event_ids"
+         (coerce (reverse (%lifecycle-fold-invalid fold)) 'vector)
+         "rejected_result_count" (%lifecycle-fold-rejected fold)
+         "source_rejected_count" (%lifecycle-fold-source-rejected fold)
+         "lifecycles" (%lifecycle-fold-lifecycles fold))))
+
 (defun conscious-lifecycle-project (events &key agent-id)
   "Purely rebuild Q5 lifecycle state from an authoritative event sequence."
-  (let ((lifecycles (make-hash-table :test #'equal))
-        (requests (make-hash-table :test #'equal))
-        (seen-event-ids (make-hash-table :test #'equal))
-        (invalid '())
-        (rejected 0)
-        (source-rejected 0)
-        (highest 0))
-    (dolist (event events)
-      (when (and (hash-table-p event)
-                 (equal agent-id (gethash "agent_id" event)))
-        (let ((event-id (gethash "id" event))
-              (type (gethash "type" event))
-              (payload (gethash "payload" event)))
-          (when (and (integerp event-id) (> event-id highest))
-            (setf highest event-id))
-          (cond
-            ((equal type "conscious-lifecycle-transition")
-             (unless (and (%lifecycle-transition-payload-p payload)
-                          (%lifecycle-source-reference-valid-p
-                           payload seen-event-ids)
-                          (%lifecycle-project-transition
-                           payload event-id lifecycles requests))
-               (push event-id invalid)))
-            ((equal type "conscious-lifecycle-result-rejected")
-             (if (and (%lifecycle-rejection-payload-p payload)
-                      (%lifecycle-source-reference-valid-p
-                       payload seen-event-ids))
-                 (incf rejected)
-                 (push event-id invalid)))
-            ((equal type "conscious-lifecycle-source-rejected")
-             (if (and (%lifecycle-source-rejection-payload-p payload)
-                      (null (gethash (gethash "request_id" payload) requests))
-                      (%lifecycle-source-reference-valid-p
-                       payload seen-event-ids))
-                 (progn
-                   (setf (gethash (gethash "request_id" payload) requests)
-                         event-id)
-                   (incf source-rejected))
-                 (push event-id invalid))))
-          (when (%lifecycle-present-id-p event-id)
-            (setf (gethash event-id seen-event-ids) t)))))
-    (let ((active 0) (terminal 0))
-      (maphash
-       (lambda (id row)
-         (declare (ignore id))
-         (if (member (gethash "status" row)
-                     *conscious-lifecycle-terminal-statuses* :test #'string=)
-             (incf terminal)
-             (incf active)))
-       lifecycles)
-      (obj "schema_version" *conscious-lifecycle-schema-version*
-           "agent_id" (or agent-id :null) "highest_event_id" highest
-           "active_count" active "terminal_count" terminal
-           "invalid_event_ids" (coerce (nreverse invalid) 'vector)
-           "rejected_result_count" rejected
-           "source_rejected_count" source-rejected
-           "lifecycles" lifecycles))))
+  (let ((fold (%make-lifecycle-fold agent-id)))
+    (dolist (event events) (%lifecycle-fold-apply fold event))
+    (%lifecycle-fold-report fold)))
+
+(defun conscious-lifecycle-shadow-step
+    (event source-present prior-row prior-request)
+  "Pure one-event adapter for durable per-key row storage. The storage layer
+supplies already verified, position-scoped reference presence and exact prior
+key state; it never implements lifecycle transition policy itself."
+  (let* ((payload (gethash "payload" event))
+         (agent-id (gethash "agent_id" event))
+         (lifecycle-id (and (hash-table-p payload)
+                            (gethash "lifecycle_id" payload)))
+         (request-id (and (hash-table-p payload)
+                          (gethash "request_id" payload)))
+         (fold (%make-lifecycle-fold agent-id)))
+    (when (and prior-row (stringp lifecycle-id))
+      (setf (gethash lifecycle-id (%lifecycle-fold-lifecycles fold))
+            prior-row))
+    (when (and prior-request (stringp request-id))
+      (setf (gethash request-id (%lifecycle-fold-requests fold))
+            prior-request))
+    (%lifecycle-fold-apply
+     fold event :record-seen-p nil
+     :source-event-before-p (lambda (ignored)
+                              (declare (ignore ignored)) source-present))
+    (values (and (stringp lifecycle-id)
+                 (gethash lifecycle-id (%lifecycle-fold-lifecycles fold)))
+            (and (stringp request-id) (not prior-request)
+                 (gethash request-id (%lifecycle-fold-requests fold)))
+            (not (null (%lifecycle-fold-invalid fold)))
+            (%lifecycle-fold-rejected fold)
+            (%lifecycle-fold-source-rejected fold))))
 
 (defun conscious-lifecycle-current (projection lifecycle-id)
   "Return a detached current lifecycle row, or NIL."

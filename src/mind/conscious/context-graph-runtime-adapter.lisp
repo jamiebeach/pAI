@@ -10,6 +10,11 @@
 (defvar *conscious-context-graph-runtime* nil)
 (defvar *conscious-context-graph-formation-owner* nil)
 (defvar *conscious-context-graph-runtime-key* nil)
+(defvar *conscious-context-graph-journal-position* nil)
+(defvar *conscious-context-graph-settled-exposure-microusd* 0)
+(defvar *conscious-context-graph-maintenance-replay-p* nil
+  "True only in an explicitly provisioned offline projection rebuild.")
+(defparameter *conscious-context-graph-full-replay-max-head* 10000)
 (defvar *conscious-context-graph-lock* (bt:make-lock "reviewed-context-graph"))
 (defvar *conscious-context-graph-formation-lock*
   (bt:make-lock "reviewed-context-graph-formation")
@@ -852,29 +857,105 @@ unbounded deep copy at every synchronization boundary."
         (pai.context-graph::cgi-owner-opens owner))
   runtime)
 
-(defun %ccg-sync (event-backend agent-id persona-id)
+(defun %ccg-journal-events (after-position through-position)
+  "Read only graph-owner journals; do not retain them in every conversation.
+
+The general recursive cache still supplies the source conversation, model and
+tool evidence needed to validate a proposal.  This owner-specific stream keeps
+large staged graph payloads out of the always-hot cognition generation."
+  (let ((events nil))
+    (multiple-value-bind (complete-p ignored-last-id ignored-count)
+        (map-events
+         (lambda (event) (push event events))
+         :after-position after-position
+         :through-position through-position
+         :types *conscious-context-graph-journal-event-types*)
+      (declare (ignore ignored-last-id ignored-count))
+      (unless complete-p
+        (error "Context graph journal stream was incomplete"))
+      (nreverse events))))
+
+(defun %ccg-event-id-less-p (left right)
+  (< (gethash "id" left 0) (gethash "id" right 0)))
+
+(defun %ccg-sync (event-backend agent-id persona-id &optional derived-backend)
   "Cache only this generation; cold replay rechecks original source authority.
-No derived SQL graph writes occur on this read path. Obsolete openings that no
-longer satisfy current replay authority are quarantined with their dependents;
-their source tasks are rebuilt only through the ordinary strict append path.
-Caller holds lock."
+When graph-owner tail events advance the projection, changed derived rows and
+the source-bound watermark are synchronized transactionally. Obsolete openings
+that no longer satisfy current replay authority are quarantined with their
+dependents; their source tasks are rebuilt only through the ordinary strict
+append path. Caller holds lock."
   (let* ((boundary (storage-authority-boundary event-backend :agent-id agent-id))
+         (head-position (gethash "through_storage_position" boundary))
          (key (%ccg-runtime-cache-key boundary agent-id persona-id))
-         (events (%recursive-thread-events)) (index (make-hash-table :test #'eql)))
+         (restored-p nil)
+         (rebuilt-p nil))
     (unless (equal key *conscious-context-graph-runtime-key*)
-       (setf *conscious-context-graph-runtime* (pai.context-graph:context-graph-runtime-create
-                   (%ccg-ontology) (%ccg-runtime-ontology-revision) agent-id persona-id)
-            *conscious-context-graph-formation-owner*
+      (when (typep derived-backend 'sqlite-derived-storage)
+        (let ((checkpoint
+                (storage-load-checkpoint
+                 derived-backend *reviewed-context-graph-projection-name*
+                 :agent-id agent-id)))
+          (when checkpoint
+            (let* ((position (gethash "through_storage_position" checkpoint))
+                   (event-id (gethash "through_event_id" checkpoint))
+                   (binding
+                     (storage-checkpoint-source-binding
+                      event-backend :agent-id agent-id
+                      :through-event-id event-id :through-position position)))
+              (multiple-value-bind (graph owner ignored settled-exposure)
+                  (reviewed-context-graph-restore
+                   derived-backend agent-id persona-id
+                   (gethash "storage_id" boundary) binding)
+                (declare (ignore ignored))
+                (when graph
+                  (setf *conscious-context-graph-runtime*
+                        (pai.context-graph:context-graph-runtime-create
+                         (%ccg-ontology) (%ccg-runtime-ontology-revision)
+                         agent-id persona-id)
+                        (pai.context-graph::context-graph-runtime-graph
+                         *conscious-context-graph-runtime*) graph
+                        *conscious-context-graph-formation-owner* owner
+                        *conscious-context-graph-journal-position* position
+                        *conscious-context-graph-settled-exposure-microusd*
+                        settled-exposure
+                        restored-p t)))))))
+      (unless restored-p
+        (when (and (typep derived-backend 'sqlite-derived-storage)
+                   (> head-position *conscious-context-graph-full-replay-max-head*)
+                   (not *conscious-context-graph-maintenance-replay-p*))
+          (error "Reviewed graph projection is absent at ledger position ~d; run the explicit high-memory rebuild"
+                 head-position))
+        (setf rebuilt-p t)
+        (setf *conscious-context-graph-runtime*
+              (pai.context-graph:context-graph-runtime-create
+               (%ccg-ontology) (%ccg-runtime-ontology-revision)
+               agent-id persona-id)
+              *conscious-context-graph-formation-owner*
               (%ccg-create-owner
                (pai.context-graph::context-graph-runtime-graph
                 *conscious-context-graph-runtime*)
                agent-id persona-id)
-            *conscious-context-graph-runtime-key* key)
+              *conscious-context-graph-journal-position*
+              (if *conscious-context-graph-maintenance-replay-p*
+                  0
+                  (or (and (boundp '*conscious-recursive-recovery-start-storage-position*)
+                           *conscious-recursive-recovery-start-storage-position*)
+                      0))
+              *conscious-context-graph-settled-exposure-microusd* 0))
+      (setf *conscious-context-graph-runtime-key* key)
       (clrhash *conscious-context-graph-semantic-vectors*)
       (clrhash *conscious-context-graph-proposal-outcomes*)
       (clrhash *conscious-context-graph-quarantined-opening-ids*))
-    (dolist (event events) (setf (gethash (gethash "id" event) index) event))
-    (let ((source-fn (lambda (graph episode now) (%ccg-source-context graph episode now index agent-id persona-id))))
+    (let* ((graph-tail
+             (%ccg-journal-events
+              (or *conscious-context-graph-journal-position* 0) head-position))
+           (events
+             (merge 'list (copy-list (%recursive-thread-events)) graph-tail
+                    #'%ccg-event-id-less-p))
+           (index (make-hash-table :test #'eql)))
+      (dolist (event events) (setf (gethash (gethash "id" event) index) event))
+      (let ((source-fn (lambda (graph episode now) (%ccg-source-context graph episode now index agent-id persona-id))))
       (dolist (event events)
         (when (> (gethash "id" event)
                  (pai.context-graph::cgi-owner-last-id *conscious-context-graph-formation-owner*))
@@ -949,8 +1030,24 @@ Caller holds lock."
       (%ccg-publish-owner-open-view
        *conscious-context-graph-runtime*
        *conscious-context-graph-formation-owner*)
+      (setf *conscious-context-graph-journal-position* head-position)
+      ;; An empty graph is still a complete, source-bound projection. Publish
+      ;; its initial checkpoint even when this ledger has no graph journals;
+      ;; otherwise offline rebuild fails and every cold read replays again.
+      ;; Cache hits and successful checkpoint restores need no repeated write.
+      (when (and (or graph-tail rebuilt-p)
+                 (typep derived-backend 'sqlite-derived-storage))
+        (reviewed-context-graph-persist
+         derived-backend
+         (pai.context-graph::context-graph-runtime-graph
+          *conscious-context-graph-runtime*)
+         *conscious-context-graph-formation-owner*
+         :through-event-id (gethash "through_event_id" boundary)
+         :through-position head-position
+         :event-storage-id (gethash "storage_id" boundary)
+         :boundary-hash (gethash "source_binding" boundary)))
       (values *conscious-context-graph-runtime* source-fn events
-              *conscious-context-graph-formation-owner*))))
+              *conscious-context-graph-formation-owner*)))))
 
 (defun %ccg-provider-profile ()
   "Graph routing is independent of the conversation model, but shares its ledger."
@@ -1113,10 +1210,11 @@ Caller holds lock."
 
 (defun %ccg-owner-exposure-microusd (owner)
   "Rebuild cumulative charged plus outcome-unknown exposure from durable phases."
-  (loop for row being the hash-values of (pai.context-graph::cgi-owner-phases owner)
-        sum (if (equal "request" (gethash "outcome" row))
-                (gethash "reserved_microusd" row)
-                (gethash "charged_microusd" row))))
+  (+ *conscious-context-graph-settled-exposure-microusd*
+     (loop for row being the hash-values of (pai.context-graph::cgi-owner-phases owner)
+           sum (if (equal "request" (gethash "outcome" row))
+                   (gethash "reserved_microusd" row)
+                   (gethash "charged_microusd" row)))))
 
 (defun %ccg-owner-budget-remaining-microusd (owner)
   (max 0 (- *conscious-context-graph-generation-budget-microusd*
@@ -1321,12 +1419,12 @@ instead of being guessed from later graph state."
            "database_write_count" 0))))
 
 (defun conscious-context-graph-formation-step (event-backend derived-backend agent-id persona-id)
-  (declare (ignore derived-backend))
   (when (%recursive-operator-pending-p)
     (return-from conscious-context-graph-formation-step (obj "status" "preempted")))
   (bt:with-lock-held (*conscious-context-graph-formation-lock*)
    (bt:with-lock-held (*conscious-context-graph-lock*)
-    (multiple-value-bind (runtime source-fn events owner) (%ccg-sync event-backend agent-id persona-id)
+    (multiple-value-bind (runtime source-fn events owner)
+        (%ccg-sync event-backend agent-id persona-id derived-backend)
       (declare (ignore runtime))
       (let ((now (funcall *conscious-context-graph-now-fn*))
             (source-blocked-count 0))
@@ -1606,20 +1704,38 @@ the graph-lock invariant before owner state or projection state is touched."
         (let ((sources (make-hash-table :test #'equal)) (ranked nil)
               (terms (pai.context-graph::%cgr-focus-terms (pai.context-graph::%cgr-tokens query))) (examined 0))
             (loop for opened in (sort (loop for e being the hash-values of (pai.context-graph::context-graph-runtime-opens runtime) collect e)
-                                    #'> :key (lambda (e) (gethash "id" e)))
-                while (< examined 1024) do
-            (loop for source across (let* ((record (pai.context-graph::%cgro-record opened))
-                                           (context (or (gethash "source_context" record)
-                                                        (gethash "context" record))))
-                                      (gethash "sources" (gethash "source_packet" context)))
-                  for id = (gethash "source_id" source)
-                  while (< examined 1024) unless (gethash id sources) do
-                    (setf (gethash id sources) t) (incf examined)
-                    (when (<= (length (gethash "text" source)) 12000)
-                      (let ((score (count-if (lambda (term)
-                                              (pai.context-graph::%cgr-term-in-range-p
-                                               term (gethash "text" source) 0 (length (gethash "text" source)))) terms)))
-                        (when (plusp score) (push (cons score source) ranked))))))
+                                      #'> :key (lambda (e) (gethash "id" e)))
+                  while (< examined 1024) do
+              ;; A lifecycle opening has no settled source packet. It remains
+              ;; valid graph history, but is not a discovery candidate.
+              (let* ((record (pai.context-graph::%cgro-record opened))
+                     (context (and (hash-table-p record)
+                                   (or (gethash "source_context" record)
+                                       (gethash "context" record))))
+                     (source-packet (and (hash-table-p context)
+                                         (gethash "source_packet" context)))
+                     (source-rows (and (hash-table-p source-packet)
+                                       (gethash "sources" source-packet))))
+                (when (vectorp source-rows)
+                  (loop for source across source-rows
+                        for id = (and (hash-table-p source)
+                                      (gethash "source_id" source))
+                        for text = (and (hash-table-p source)
+                                        (gethash "text" source))
+                        while (< examined 1024)
+                        when (and (stringp id) (stringp text)
+                                  (not (gethash id sources))) do
+                          (setf (gethash id sources) t)
+                          (incf examined)
+                          (when (<= (length text) 12000)
+                            (let ((score
+                                    (count-if
+                                     (lambda (term)
+                                       (pai.context-graph::%cgr-term-in-range-p
+                                        term text 0 (length text)))
+                                     terms)))
+                              (when (plusp score)
+                                (push (cons score source) ranked))))))))
           (setf ranked (sort ranked (lambda (a b) (if (= (car a) (car b))
                               (string< (gethash "source_id" (cdr a)) (gethash "source_id" (cdr b))) (> (car a) (car b))))))
           (let* ((source-packet
@@ -1861,9 +1977,11 @@ The second value is true only when the complete identity scan index was examined
           (gethash "unresolved_starting_node_id" result) (if (and (stringp start) (not entity)) start :null))
     result))
 
-(defun conscious-context-graph-search (event-backend agent-id persona-id request)
+(defun conscious-context-graph-search
+    (event-backend agent-id persona-id request &optional derived-backend)
   (bt:with-lock-held (*conscious-context-graph-lock*)
-    (%ccg-search (%ccg-sync event-backend agent-id persona-id) request)))
+    (%ccg-search
+     (%ccg-sync event-backend agent-id persona-id derived-backend) request)))
 
 (defun %ccg-confirmation-candidate (runtime fact-id)
   "Build the closed detached view used by the public read port."
@@ -1907,7 +2025,7 @@ The second value is true only when the complete identity scan index was examined
               runtime)))))
 
 (defun conscious-context-graph-confirmation-candidate
-    (event-backend agent-id persona-id fact-id)
+    (event-backend agent-id persona-id fact-id &optional derived-backend)
   "Resolve one exact current inference for an append-only confirmation request.
 
 This is a read port.  It neither upgrades evidence nor edits the graph.  A
@@ -1916,16 +2034,16 @@ formation, where claim identity can upgrade the same claim or retire it in
 favour of a directly evidenced correction."
   (bt:with-lock-held (*conscious-context-graph-lock*)
     (%ccg-confirmation-candidate
-     (%ccg-sync event-backend agent-id persona-id) fact-id)))
+     (%ccg-sync event-backend agent-id persona-id derived-backend) fact-id)))
 
 (defun conscious-context-graph-proposal-result
-    (event-backend agent-id persona-id proposal-event-id)
+    (event-backend agent-id persona-id proposal-event-id &optional derived-backend)
   "Synchronize and return the durable application outcome for one proposal."
   (unless (and (integerp proposal-event-id) (plusp proposal-event-id))
     (error "Graph proposal result requires one positive event id"))
   (bt:with-lock-held (*conscious-context-graph-lock*)
     (multiple-value-bind (runtime ignored-source-fn events ignored-owner)
-        (%ccg-sync event-backend agent-id persona-id)
+        (%ccg-sync event-backend agent-id persona-id derived-backend)
       (declare (ignore ignored-source-fn ignored-owner))
       (let* ((graph (pai.context-graph::context-graph-runtime-graph runtime))
              (receipt
@@ -2019,6 +2137,10 @@ favour of a directly evidenced correction."
                  "character_budget" character-budget "database_write_count" 0 "provider_calls" 0)
             (coerce (nreverse metadata) 'vector))))
 
-(defun conscious-context-graph-attention-context (event-backend agent-id persona-id frame character-budget)
+(defun conscious-context-graph-attention-context
+    (event-backend agent-id persona-id frame character-budget
+     &optional derived-backend)
   (bt:with-lock-held (*conscious-context-graph-lock*)
-    (%ccg-context-records (%ccg-sync event-backend agent-id persona-id) frame character-budget)))
+    (%ccg-context-records
+     (%ccg-sync event-backend agent-id persona-id derived-backend)
+     frame character-budget)))

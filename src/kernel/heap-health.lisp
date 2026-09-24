@@ -12,12 +12,10 @@
           heap-health-start heap-health-stop))
 
 (defparameter *heap-health-interval-seconds* 5)
-;; The incident workload can promote roughly another 20 percentage points of
-;; dynamic space while a full GC is already in progress. Waiting until 50%
-;; therefore does not leave SBCL enough copying/promotion headroom. Start the
-;; same bounded recovery GC at 30%, while the heap is still recoverable.
+;; Warning is observational. A full copying GC at this boundary caused the
+;; two September heap failures while a large replay generation was live.
 (defparameter *heap-health-warning-ratio* 0.30d0)
-(defparameter *heap-health-critical-ratio* 0.80d0)
+(defparameter *heap-health-critical-ratio* 0.65d0)
 (defparameter *heap-health-full-gc-cooldown-seconds* 30)
 (defparameter *heap-health-sample-cap* 17280)
 
@@ -64,12 +62,12 @@
             (subseq *heap-health-samples* 0 *heap-health-sample-cap*))))
   sample)
 
-(defun heap-health-sample (&key (allow-gc t) (now (get-universal-time)))
+(defun heap-health-sample (&key (allow-gc nil) (now (get-universal-time)))
   "Record one content-free heap sample and return it.
 
-At warning pressure a bounded full GC distinguishes transient allocation from
-retained heap. If the post-GC ratio remains critical, autonomous generation is
-paused before exhaustion; public conversation is not disabled."
+Automatic sampling never initiates a full copying GC. ALLOW-GC is retained
+only as an explicit diagnostic/test seam. At critical pressure autonomous
+generation is paused before exhaustion; public conversation remains enabled."
   (multiple-value-bind (before limit before-ratio) (%heap-health-current)
     (let* ((gc-eligible
              (and allow-gc

@@ -6,11 +6,16 @@
           conscious-storage-build-checkpoint
           conscious-storage-refresh-checkpoint
           conscious-storage-restore-checkpoint-tail
-          conscious-storage-restore-event-sequence))
+          conscious-storage-restore-event-sequence
+          conscious-attention-shadow-policy-revision
+          conscious-attention-shadow-select
+          conscious-attention-shadow-events
+          conscious-storage-indexed-state
+          conscious-storage-refresh-indexed))
 
 (defparameter *conscious-storage-checkpoint-name* "conscious-runtime")
 (defparameter *conscious-storage-projector-revision*
-  "conscious-storage-bounded-prefix-v3")
+  "conscious-storage-bounded-prefix-v6")
 
 (defun %conscious-storage-runtime-revision ()
   (if (and (boundp '*conscious-cognition-runtime-revision*)
@@ -59,21 +64,281 @@
 
 (defun %conscious-storage-compact-agent-message (event)
   (let* ((payload (gethash "payload" event))
-         (metadata (and (hash-table-p payload) (gethash "metadata" payload))))
+         (metadata (and (hash-table-p payload) (gethash "metadata" payload)))
+         (compacted (%storage-object
+                     "text_present"
+                     (if (and (stringp (gethash "text" payload))
+                              (plusp (length (gethash "text" payload))))
+                         t nil))))
+    (dolist (key '("authorization_kind" "authorization_id" "final"))
+      (multiple-value-bind (value present-p) (gethash key payload)
+        (when present-p (setf (gethash key compacted) value))))
+    (when (hash-table-p metadata)
+      (setf (gethash "metadata" compacted)
+            (%storage-object
+             "source" (gethash "source" metadata :null)
+             "publication_validation"
+             (gethash "publication_validation" metadata :null))))
     (%storage-object
      "schema_version" (gethash "schema_version" event 1)
      "id" (gethash "id" event) "timestamp" (gethash "timestamp" event)
      "type" "agent-message" "agent_id" (gethash "agent_id" event :null)
      "caused_by" (gethash "caused_by" event :null)
      "tick_id" (gethash "tick_id" event :null)
-     "payload"
-     (%storage-object
-      "authorization_kind" (gethash "authorization_kind" payload :null)
-      "metadata"
-      (%storage-object
-       "source" (gethash "source" metadata :null)
-       "publication_validation"
-       (gethash "publication_validation" metadata :null))))))
+     "payload" compacted)))
+
+(defun %conscious-storage-compact-causal-tool-call (event)
+  (%storage-object
+   "schema_version" (gethash "schema_version" event 1)
+   "id" (gethash "id" event) "timestamp" (gethash "timestamp" event)
+   "type" "tool-call" "agent_id" (gethash "agent_id" event :null)
+   "caused_by" (gethash "caused_by" event :null)
+   "payload" (%storage-object)))
+
+(defun conscious-attention-shadow-policy-revision ()
+  "Bind selected rows to the complete event-type admission set. A new
+admitted type cannot silently reuse an older shadow that omitted it."
+  (let ((types nil))
+    (maphash (lambda (type ignored)
+               (declare (ignore ignored))
+               (push type types))
+             *stimulus-kind-map*)
+    (%storage-sha256
+     (format nil "attention-selector-v3|~{~a~^|~}"
+             (sort (append types *inbox-consumption-event-types*
+                           (list "agent-message" "tool-call")) #'string<)))))
+
+(defun conscious-attention-shadow-select (event)
+  "Retain only facts needed by the pure inbox fold.  The authorized legacy
+reply shape is compacted, but its causal and authorization fields remain."
+  (let ((type (gethash "type" event "")))
+    (cond ((or (stimulus-admissible-p type)
+               (%conscious-storage-consumption-type-p type))
+           event)
+          ((%conscious-storage-agent-message-root
+            event (gethash "agent_id" event))
+           (%conscious-storage-compact-agent-message event))
+          ((string= type "tool-call")
+           (%conscious-storage-compact-causal-tool-call event)))))
+
+(defun conscious-attention-shadow-events
+    (derived source agent-id &key (limit 128) through-event-id)
+  "Reconstruct an inbox-equivalent sparse ledger view from selected rows.
+No ordinary journal body is read.  Neutral gap stubs retain the exact event
+IDs needed for highest-observed and consumption-watermark semantics.  This
+is a parity candidate, not yet the live attention reader."
+  (let* ((revision (conscious-attention-shadow-policy-revision))
+         (watermark (storage-shadow-attention-report
+                     derived source :agent-id agent-id
+                     :policy-revision revision))
+         (boundary (storage-authority-boundary source :agent-id agent-id))
+         (target-position
+           (if through-event-id
+               (storage-event-position source agent-id through-event-id)
+               (gethash "through_storage_position" boundary)))
+         (ordinal 0) (last-position 0) (events nil) (finished nil))
+    (unless (and watermark
+                 target-position
+                 (<= target-position (gethash "through_position" watermark))
+                 (= (gethash "through_position" watermark)
+                    (gethash "through_storage_position" boundary)))
+      (error 'storage-conflict-error :operation :attention-events
+             :detail "attention rows are absent or behind source authority"))
+    (labels ((stub (id)
+               (obj "id" id "type" "projection-accounted"
+                    "payload" (obj) "agent_id" agent-id)))
+      (loop until finished do
+        (multiple-value-bind (rows pinned)
+            (storage-shadow-attention-read-page
+             derived source :agent-id agent-id
+             :policy-revision revision :after-ordinal ordinal :limit limit)
+          (unless (equal (gethash "source_binding" watermark)
+                         (gethash "source_binding" pinned))
+            (error 'storage-conflict-error :operation :attention-events
+                   :detail "attention cursor changed during page stream"))
+          (dolist (row rows)
+            (destructuring-bind (next-ordinal position previous-id event) row
+              (when (> position target-position)
+                (setf finished t)
+                (return))
+              (when (> position (1+ last-position))
+                (push (stub previous-id) events))
+              (push event events)
+              (setf ordinal next-ordinal last-position position)))
+          (when (= ordinal (gethash "selected_count" watermark))
+            (setf finished t))))
+      (when (> target-position last-position)
+        (push (stub (or through-event-id
+                        (gethash "through_event_id" watermark)))
+              events))
+      (unless (= (gethash "through_storage_position" boundary)
+                 (gethash "through_storage_position"
+                          (storage-authority-boundary
+                           source :agent-id agent-id)))
+        (error 'storage-conflict-error :operation :attention-events
+               :detail "source authority advanced during attention read"))
+      (values (nreverse events)
+              (storage-max-event-id-through-position
+               source agent-id target-position)))))
+
+(defun conscious-storage-indexed-state
+    (source derived agent-id &key (now (get-universal-time))
+                                 (runtime-revision
+                                   (%conscious-storage-runtime-revision))
+                                 (maximum-selected-events 8192)
+                                 through-event-id)
+  "Project current conscious state from three source-bound row families.
+This is an explicit candidate read, not yet the installed runtime route. It
+requires each shadow at the same physical authority head and refuses an
+oversized selected-event generation instead of recreating a heap spike.
+For an earlier root, current lifecycle and pulse rows are usable only when
+their event families have not changed after that physical boundary. The
+semantic lifecycle view and conversation evidence remain separate gates."
+  (unless (and (integerp maximum-selected-events)
+               (plusp maximum-selected-events))
+    (error "Indexed conscious state requires a positive event bound"))
+  (let* ((boundary (storage-authority-boundary source :agent-id agent-id))
+         (head (gethash "through_storage_position" boundary))
+         (attention (storage-shadow-attention-report
+                     derived source :agent-id agent-id
+                     :policy-revision
+                     (conscious-attention-shadow-policy-revision)))
+         (lifecycle-watermark (storage-shadow-lifecycle-watermark
+                               derived source :agent-id agent-id))
+         (pulse (storage-shadow-conscious-pulse-report
+                 derived source :agent-id agent-id))
+         (target-position
+           (if through-event-id
+               (storage-event-position source agent-id through-event-id)
+               head)))
+    (unless (and attention lifecycle-watermark pulse
+                 target-position (<= target-position head)
+                 (= head (gethash "through_position" attention)
+                    (gethash "through_position" lifecycle-watermark)
+                    (gethash "through_position" pulse))
+                 (<= (gethash "selected_count" attention)
+                     maximum-selected-events))
+      (error 'storage-conflict-error :operation :indexed-conscious-state
+             :detail "indexed conscious inputs are absent, stale or over bound"))
+    (when (< target-position head)
+      (let ((changed nil))
+        (multiple-value-bind (complete-p)
+            (storage-map-events
+             source
+             (lambda (event position)
+               (declare (ignore event position))
+               (setf changed t))
+             :agent-id agent-id :after-position target-position
+             :through-position head
+             :event-types
+             '("conscious-lifecycle-transition"
+               "conscious-lifecycle-result-rejected"
+               "conscious-lifecycle-source-rejected"
+               "pulse-committed"))
+          (unless complete-p
+            (error 'storage-conflict-error
+                   :operation :indexed-conscious-state
+                   :detail "as-of tail check did not complete")))
+        (when changed
+          (error 'storage-conflict-error :operation :indexed-conscious-state
+                 :detail "lifecycle or pulse state changed after as-of root"))))
+    (multiple-value-bind (attention-events highest)
+        (conscious-attention-shadow-events
+         derived source agent-id :through-event-id through-event-id)
+      (let* ((lifecycle (storage-shadow-lifecycle-project
+                         derived source :agent-id agent-id))
+             (as-of-lifecycle
+               (if through-event-id
+                   (let ((copy (make-hash-table :test #'equal)))
+                     (maphash (lambda (key value)
+                                (setf (gethash key copy) value))
+                              lifecycle)
+                     (setf (gethash "highest_event_id" copy) highest)
+                     copy)
+                   lifecycle))
+             (context (make-projection-context
+                       :now now :agent-id agent-id
+                       :runtime-revision runtime-revision
+                       :lifecycle
+                       (conscious-lifecycle-awaiting as-of-lifecycle)))
+             (inbox (inbox-project
+                     attention-events :context context
+                     :observed-highest-event-id highest))
+             (state (conscious-state-project
+                     nil :context context :inbox-projection inbox
+                     :committed-pulse-sequence
+                     (gethash "max_sequence" pulse))))
+      (unless (= head
+                 (gethash "through_storage_position"
+                          (storage-authority-boundary
+                           source :agent-id agent-id)))
+        (error 'storage-conflict-error :operation :indexed-conscious-state
+               :detail "source authority advanced during indexed state read"))
+      (values state context as-of-lifecycle inbox)))))
+
+(defun conscious-storage-refresh-indexed
+    (source derived agent-id &key (page-limit 128) (maximum-pages 16))
+  "Advance prepared conscious row families through one captured ledger head.
+This is incremental maintenance, never an implicit historical build. Each
+family commits bounded pages independently; the indexed reader refuses an
+interrupted or mixed-head set until a later call finishes all three."
+  (unless (and (integerp page-limit) (<= 1 page-limit 512)
+               (integerp maximum-pages) (plusp maximum-pages))
+    (error "Indexed conscious refresh requires positive bounded pages"))
+  (let* ((head (storage-head-position source :agent-id agent-id))
+         (revision (conscious-attention-shadow-policy-revision))
+         (attention (storage-shadow-attention-report
+                     derived source :agent-id agent-id
+                     :policy-revision revision))
+         (lifecycle (storage-shadow-lifecycle-watermark
+                     derived source :agent-id agent-id))
+         (pulse (storage-shadow-conscious-pulse-report
+                 derived source :agent-id agent-id)))
+    (unless (and attention lifecycle pulse)
+      (error 'storage-conflict-error :operation :indexed-conscious-refresh
+             :detail "offline preparation of all three row families is required"))
+    (labels ((advance (name initial thunk)
+               (let ((position (gethash "through_position" initial)))
+                 (when (> position head)
+                   (error 'storage-conflict-error
+                          :operation :indexed-conscious-refresh
+                          :detail "derived cursor is ahead of captured authority"))
+                 (loop repeat maximum-pages
+                       while (< position head)
+                       do (let* ((row (funcall thunk))
+                                 (next (and row
+                                            (gethash "through_position" row))))
+                            (unless (and (integerp next)
+                                         (> next position))
+                              (error 'storage-conflict-error
+                                     :operation :indexed-conscious-refresh
+                                     :detail (format nil "~a cursor did not advance"
+                                                     name)))
+                            (setf position next)))
+                 (unless (= position head)
+                   (error 'storage-conflict-error
+                          :operation :indexed-conscious-refresh
+                          :detail (format nil "~a tail exceeds bounded page allowance"
+                                          name))))))
+      (advance "attention" attention
+               (lambda ()
+                 (storage-shadow-attention-apply-page
+                  derived source #'conscious-attention-shadow-select
+                  :agent-id agent-id :policy-revision revision
+                  :limit page-limit :maximum-event-bytes 8388608)))
+      (advance "lifecycle" lifecycle
+               (lambda ()
+                 (storage-shadow-lifecycle-apply-page
+                  derived source #'conscious-lifecycle-shadow-step
+                  :agent-id agent-id :limit page-limit)))
+      (advance "pulse" pulse
+               (lambda ()
+                 (storage-shadow-conscious-pulse-apply-page
+                  derived source :agent-id agent-id :limit page-limit))))
+    (unless (= head (storage-head-position source :agent-id agent-id))
+      (error 'storage-conflict-error :operation :indexed-conscious-refresh
+             :detail "authority advanced during indexed refresh"))
+    (conscious-storage-indexed-state source derived agent-id)))
 
 (defun %conscious-storage-accounted-stub (event)
   ;; Preserve identity/order/partition facts used by highest-ID, watermark and

@@ -64,7 +64,7 @@ class QualificationContractTests(unittest.TestCase):
         contract = json.loads((ROOT / "tests" / "qualification-contract.json").read_text())
         report = MODULE.validate(ROOT, contract)
         self.assertTrue(report["passed"], report)
-        self.assertEqual(report["lisp_suites_discovered"], 224)
+        self.assertEqual(report["lisp_suites_discovered"], 243)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+;;;; harness: full-system
 (in-package :agent)
 
 (defvar *web-security-pass* 0)

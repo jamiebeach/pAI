@@ -297,30 +297,58 @@ recomputing it."
         0)))
 
 (defun %inbox-authorized-conversation-reply-root (event agent-id)
-  "Return the stimulus ID durably handled by a canonical solicited reply.
+  "Return the user stimulus durably handled by a published assistant reply.
 
-This replay compatibility rule recognizes Q4.5 conversation events written
-before captured pulse commits carried explicit consumption.  It accepts only
-the final public authorization envelope, never generic model output or an
-arbitrary causal journal row."
+Three source-defined publication shapes exist: the old AUTO-TURN completion
+event (or its single-final fallback), the recursive solicited publication,
+and the Q4.5 accepted publication.  Tool-bearing draft segments, private
+findings, generic model output, and arbitrary causal journal rows cannot
+retire a barrier.  This is replay compatibility for event-derived completion,
+not a new way for a model to claim that a stimulus was handled."
   (when (and (hash-table-p event)
-             (string= "agent-message" (gethash "type" event ""))
-             (or (null agent-id)
-                 (equal agent-id (gethash "agent_id" event))))
+             (string= "agent-message" (gethash "type" event "")))
     (let* ((payload (gethash "payload" event))
            (metadata (and (hash-table-p payload)
                           (gethash "metadata" payload)))
-           (cause (gethash "caused_by" event)))
+           (cause (gethash "caused_by" event))
+           (authorization (and (hash-table-p payload)
+                               (gethash "authorization_kind" payload)))
+           (text (and (hash-table-p payload) (gethash "text" payload)))
+           (text-present
+             (or (and (stringp text) (plusp (length text)))
+                 (eq t (and (hash-table-p payload)
+                            (gethash "text_present" payload))))))
       (when (and (hash-table-p payload)
-                 (hash-table-p metadata)
+                 (or (null agent-id)
+                     (equal agent-id (gethash "agent_id" event))
+                     ;; Imported AUTO-TURN replies predate partition stamping.
+                     ;; Only that unversioned public shape may rely on the
+                     ;; caller's single-agent authority partition; an explicit
+                     ;; mismatch or a modern missing partition is refused.
+                     (and (null authorization)
+                          (let ((partition (gethash "agent_id" event)))
+                            (or (null partition) (eq partition :null)))))
                  (or (integerp cause)
                      (and (stringp cause) (plusp (length cause))))
-                 (string= "solicited-publication-candidate"
-                          (gethash "authorization_kind" payload ""))
-                 (string= "q4.5-conversation"
-                          (gethash "source" metadata ""))
-                 (member (gethash "publication_validation" metadata)
-                         '("accepted" "removal-only") :test #'string=))
+                 (cond
+                   ((equal authorization "solicited-publication-candidate")
+                    (and (hash-table-p metadata)
+                         (string= "q4.5-conversation"
+                                  (gethash "source" metadata ""))
+                         (member (gethash "publication_validation" metadata)
+                                 '("accepted" "removal-only")
+                                 :test #'string=)))
+                   ((equal authorization "recursive-solicited-reply")
+                    (and text-present (hash-table-p metadata)
+                         (string= "recursive-mind-v1"
+                                  (gethash "source" metadata ""))
+                         (let ((id (gethash "authorization_id" payload)))
+                           (and (stringp id) (plusp (length id))))))
+                   ((null authorization)
+                    (and text-present (null metadata)
+                         (multiple-value-bind (final present-p)
+                             (gethash "final" payload)
+                           (or (not present-p) (eq final t)))))))
         (format nil "stimulus:~a" cause)))))
 
 ;;; --- projection ----------------------------------------------------------
@@ -348,6 +376,8 @@ that applies to nothing is either a bug or an attack, and both are worth
 seeing."
   (let ((consumed (make-hash-table :test #'equal))
         (observed (make-hash-table :test #'equal))
+        (tool-call-roots (make-hash-table :test #'equal))
+        (tool-results-by-root (make-hash-table :test #'equal))
         (ignored 0))
     (map nil
          (lambda (event)
@@ -359,7 +389,24 @@ seeing."
                   (let ((id (gethash "id" event)))
                     (when id
                       (setf (gethash (format nil "stimulus:~a" id) observed)
-                            type))))
+                            type)
+                      (when (equal type "tool-result")
+                        (let ((root (gethash (gethash "caused_by" event)
+                                             tool-call-roots)))
+                          (when root
+                            (push (format nil "stimulus:~a" id)
+                                  (gethash root tool-results-by-root))))))))
+                 ;; A direct tool result is associated with an already
+                 ;; observed user root only through its durable call event.
+                 ;; The call itself is journal evidence, not a stimulus.
+                 ((equal "tool-call" type)
+                  (let* ((root (format nil "stimulus:~a"
+                                       (gethash "caused_by" event)))
+                         (id (gethash "id" event)))
+                    (when (and id
+                               (equal "user-message"
+                                      (gethash root observed)))
+                      (setf (gethash id tool-call-roots) root))))
                  ;; A canonical authorized reply is durable evidence that its
                  ;; triggering barrier was handled.  Older Q4.5 turns did not
                  ;; yet duplicate that fact into pulse consumption.
@@ -369,7 +416,13 @@ seeing."
                     (when (and root
                                (string= "user-message"
                                         (gethash root observed "")))
-                      (setf (gethash root consumed) t))))
+                      (setf (gethash root consumed) t)
+                      ;; Only tool results that preceded this committed
+                      ;; public reply were available to that turn. A later
+                      ;; result stays pending until a later publication.
+                      (dolist (result-id
+                               (gethash root tool-results-by-root))
+                        (setf (gethash result-id consumed) t)))))
                  ((member type *inbox-consumption-event-types* :test #'equal)
                   (let* ((payload (let ((p (gethash "payload" event)))
                                     (if (hash-table-p p) p (obj))))
@@ -456,7 +509,8 @@ not outstanding -- consumed plus terminally dispositioned."
     watermark))
 
 (defun inbox-project (events &key context now agent-id current-revision
-                                  soft-bound hard-bound)
+                                  soft-bound hard-bound
+                                  observed-highest-event-id)
   "Project EVENTS into bounded active candidacy.
 
 EVENTS is a sequence of stored event hash tables, oldest first. Pure: no
@@ -466,6 +520,10 @@ everything that can vary between runs arrives in CONTEXT.
 CONTEXT is a projection context. The individual keywords are a convenience
 that builds one; there is a single code path either way, so a caller can
 never half-supply a composition.
+
+OBSERVED-HIGHEST-EVENT-ID may be supplied by a source-bound indexed reader
+when neutral journal gaps have been collapsed. It must not understate any
+provided row. The event ledger remains the authority for that scalar.
 
 Stimuli already acknowledged by a consumption event are excluded from active
 candidacy and counted under `consumed`. They are not rejections -- they were
@@ -501,6 +559,11 @@ handled, which is the ordinary end of a stimulus's life."
                         (let ((id (and (hash-table-p e) (gethash "id" e))))
                           (when (and (numberp id) (> id m)) (setf m id))))
                   events)
+             (when observed-highest-event-id
+               (unless (and (integerp observed-highest-event-id)
+                            (<= m observed-highest-event-id))
+                 (error "Indexed inbox highest event ID understates supplied rows"))
+               (setf m observed-highest-event-id))
              m))
          (seen (make-hash-table :test #'equal))
          (admitted '()) (rejected '()) (deferred '())
@@ -607,6 +670,9 @@ handled, which is the ordinary end of a stimulus's life."
              ;; one. Visible beats silent.
              (degraded (> barrier-count hard-bound)))
         (obj "schema_version" *inbox-schema-version*
+             "evaluated_at" (gethash "now" ctx)
+             "agent_id" (gethash "agent_id" ctx)
+             "consumer" (gethash "consumer" ctx)
              "watermark" watermark
              "highest_event_id" highest-event-id
              "composition_hash" (projection-context-hash ctx)

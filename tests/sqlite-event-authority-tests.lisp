@@ -2,6 +2,14 @@
 
 (ql:quickload '(:cffi :shasht :ironclad :bordeaux-threads) :silent t)
 
+;; This module-isolation fixture loads the SQLite adapter without the recursive
+;; mind. Declare its registered seam with a neutral base, preserving the real
+;; module's ownership rather than hiding an undeclared layer error.
+(load (test-source "seams.lisp"))
+(define-seam recursive-root-failure-receipt (root-event-id)
+  (declare (ignore root-event-id))
+  nil)
+
 (defvar *sea-pass* 0)
 (defvar *sea-fail* 0)
 
@@ -23,7 +31,8 @@
 (dolist (file '("event-log.lisp" "policy.lisp" "stimulus.lisp" "census.lisp"
                 "concern.lisp" "codelets.lisp" "context.lisp" "inbox.lisp"
                 "attention.lisp" "mind/conscious/lifecycle.lisp" "lifecycle-semantics.lisp"
-                "state.lisp" "storage-substrate.lisp" "sqlite-storage.lisp"
+                "state.lisp" "storage-substrate.lisp" "activity-storage.lisp"
+                "sqlite-storage.lisp" "sqlite-activity-storage.lisp"
                 "memory-storage.lisp" "sqlite-derived-storage.lisp"
                 "sqlite-import.lisp" "storage-projection.lisp"
                 "sqlite-event-authority.lisp" "cognitive-work.lisp"
@@ -125,6 +134,25 @@
                    (string= source-before (uiop:read-file-string source)))
         (sea-check "full audit replay reads SQLite history"
                    (= 4 (length (replay-events))))
+        (sea-check "typed episodic authority read matches full replay selection"
+                   (equal
+                    (mapcar (lambda (event) (gethash "id" event))
+                            (event-episodic-context-events))
+                    (mapcar (lambda (event) (gethash "id" event))
+                            (remove-if-not
+                             (lambda (event)
+                               (member (gethash "type" event)
+                                       *event-episodic-context-types*
+                                       :test #'string=))
+                             (replay-events)))))
+        (sea-check "episodic authority read excludes events after turn boundary"
+                   (equal '(1 2)
+                          (mapcar (lambda (event) (gethash "id" event))
+                                  (event-episodic-context-events 2))))
+        (sea-check "episodic authority refuses missing turn boundary"
+                   (sea-signals-p
+                    'storage-conflict-error
+                    (lambda () (event-episodic-context-events 999))))
         (let ((exact (event-read-event 4)))
           (sea-check "exact event reads use the installed SQLite authority"
                      (and (= 4 (gethash "id" exact))
@@ -132,6 +160,20 @@
                           (string= "native"
                                    (gethash "status"
                                             (gethash "payload" exact))))))
+        (sea-check "root-recent port refuses missing causal index"
+                   (and
+                    (not (storage-activity-index-ready-p
+                          *sqlite-event-authority-backend*))
+                    (sea-signals-p
+                     'error
+                     (lambda ()
+                       (event-root-recent-events 1 '("agent-message") 1 3)))))
+        (storage-prepare-activity-index *sqlite-event-authority-backend*)
+        (sea-check "root-recent port returns bounded causal evidence"
+                   (equal '(2)
+                          (mapcar (lambda (event) (gethash "id" event))
+                                  (event-root-recent-events
+                                   1 '("agent-message") 1 3))))
         (sea-check "authority replay preserves the legacy single-value contract"
                    (= 1 (length (multiple-value-list (replay-events)))))
         (sea-check "audit replay preserves inclusive time windows"
@@ -216,6 +258,35 @@
                    (= 5 (log-event "heap-health" (obj "status" "restart"))))
         (event-authority-clear)
         (sea-delete-db derived-database)
+        (sea-check "missing derived database fails closed on ordinary startup"
+                   (sea-signals-p
+                    'storage-conflict-error
+                    (lambda ()
+                      (sqlite-event-authority-prepare
+                       database source :derived-database derived-database
+                       :agent-id agent-id))))
+        (sea-check "refused ordinary startup does not create derived state"
+                   (null (probe-file derived-database)))
+        (sea-check "bounded recovery refuses a ledger beyond its limit"
+                   (sea-signals-p
+                    'storage-conflict-error
+                    (lambda ()
+                      (sqlite-event-authority-prepare
+                       database source :derived-database derived-database
+                       :agent-id agent-id :missing-derived-replay-max-head 4))))
+        (sea-check "bounded refusal does not create derived state"
+                   (null (probe-file derived-database)))
+        (multiple-value-bind (ignored rebuilt)
+            (sqlite-event-authority-prepare
+             database source :derived-database derived-database
+             :agent-id agent-id :missing-derived-replay-max-head 5)
+          (declare (ignore ignored))
+          (sea-check "bounded recovery includes its exact ledger boundary"
+                     (and (string= "projection-rebuilt-from-ledger"
+                                   (gethash "status" rebuilt))
+                          (= 5 (gethash "event_count" rebuilt)))))
+        (event-authority-clear)
+        (sea-delete-db derived-database)
         (multiple-value-bind (ignored rebuilt)
             (sqlite-event-authority-prepare
              database source :derived-database derived-database
@@ -239,6 +310,13 @@
                         (sqlite-event-authority-prepare
                          database source :derived-database derived-database
                          :agent-id agent-id))))
+          (sea-check "bounded missing-state recovery cannot repair composition drift"
+                     (sea-signals-p
+                      'storage-conflict-error
+                      (lambda ()
+                        (sqlite-event-authority-prepare
+                         database source :derived-database derived-database
+                         :agent-id agent-id :missing-derived-replay-max-head 5))))
           (multiple-value-bind (ignored rebuilt)
               (sqlite-event-authority-prepare
                database source :derived-database derived-database
@@ -327,9 +405,9 @@
     (sea-delete-db zero-source-database)
     (sea-delete-db new-state-database))
 
-;; Existing CLI databases already have their checkpoint in events.sqlite3.
-;; The first separated boot must copy and verify it before derived authority
-;; is selected; it must not demand a replay or event migration flag.
+;; Existing CLI databases can have their checkpoint in events.sqlite3.
+;; Relocation requires an explicitly authorized offline rebuild; an ordinary
+;; startup must not silently replay the full ledger.
 (let* ((root (test-state-dir))
        (database (merge-pathnames "authority-relocation.sqlite3" root))
        (mismatch-database
@@ -354,8 +432,24 @@
           (declare (ignore report ignored)))
         (storage-close legacy-backend)
         (setf legacy-backend nil)
+        (sea-check "ordinary startup refuses implicit legacy checkpoint rebuild"
+                   (sea-signals-p
+                    'storage-conflict-error
+                    (lambda ()
+                      (sqlite-event-authority-prepare
+                       database nil :derived-database derived
+                       :agent-id agent-id))))
+        (let ((derived-backend (make-sqlite-derived-storage derived)))
+          (unwind-protect
+              (sea-check "refused startup published no derived checkpoint"
+                         (null (storage-load-checkpoint
+                                derived-backend
+                                *conscious-storage-checkpoint-name*
+                                :agent-id agent-id)))
+            (storage-close derived-backend)))
         (sqlite-event-authority-prepare
-         database nil :derived-database derived :agent-id agent-id)
+         database nil :derived-database derived :agent-id agent-id
+         :rebuild-stale-checkpoint-p t)
         (let ((relocated
                 (storage-load-checkpoint
                  *sqlite-event-authority-checkpoint-backend*
@@ -388,6 +482,49 @@
     (when legacy-backend (ignore-errors (storage-close legacy-backend)))
     (sea-delete-db database)
     (sea-delete-db mismatch-database)
+    (sea-delete-db derived)))
+
+(let* ((root (test-state-dir))
+       (database (merge-pathnames "ledger-only-events.sqlite3" root))
+       (derived (merge-pathnames "ledger-only-derived.sqlite3" root))
+       (agent-id "ledger-only-fixture"))
+  (sea-delete-db database)
+  (sea-delete-db derived)
+  (unwind-protect
+       (progn
+         (let ((source (make-sqlite-storage database))
+               (rows (make-sqlite-derived-storage derived)))
+           (unwind-protect
+                (storage-append-event
+                 source "user-message" (obj "text" "synthetic")
+                 :agent-id agent-id)
+             (storage-close rows)
+             (storage-close source)))
+         (dotimes (reopen 2)
+           (multiple-value-bind (backend receipt)
+               (sqlite-event-authority-prepare
+                database nil :derived-database derived :agent-id agent-id
+                :restore-projection-p nil)
+             (declare (ignore backend))
+             (sea-check "ledger-only reopen skips conscious checkpoint"
+                        (and (string= "opened-ledger-only"
+                                      (gethash "status" receipt))
+                             (null (storage-load-checkpoint
+                                    *sqlite-event-authority-checkpoint-backend*
+                                    *conscious-storage-checkpoint-name*
+                                    :agent-id agent-id))
+                             (= 1 (length (replay-events)))))
+             (sea-check "ledger-only projection requests fail closed"
+                        (sea-signals-p
+                         'storage-unavailable-error
+                         (lambda () (event-projection-events))))
+             (sea-check "ledger-only checkpoint refresh is unavailable"
+                        (sea-signals-p
+                         'storage-unavailable-error
+                         (lambda () (sqlite-event-authority-checkpoint))))
+             (event-authority-clear))))
+    (when *event-authority-port* (ignore-errors (event-authority-clear)))
+    (sea-delete-db database)
     (sea-delete-db derived)))
 
 (format t "~%~d passed, ~d failed~%" *sea-pass* *sea-fail*)

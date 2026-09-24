@@ -29,7 +29,7 @@ unrecognized output all produce nonzero exit status. A later passing tally must
 not hide an earlier failure. Assert-by-raising suites require an explicit success
 marker and clean completion.
 
-The public inventory contains 224 Lisp suites. Twenty-four inherited suites that
+The public inventory contains 243 Lisp suites. Twenty-four inherited suites that
 require the originating system's PostgreSQL clone were explicitly retired from
 the public artifact because SQLite is the supported runtime authority. Their
 names and exclusion reasons remain in the private curation decision record. This
@@ -40,7 +40,11 @@ flat image layout and private-era sealed source manifest are also excluded with
 explicit reasons. Their current invariants are covered by ASDF load, source-index,
 dispatch parity, wrap completeness, and candidate-manifest checks.
 
-The retained 224-suite baseline passes from an immutable candidate image with
+The retained 243-suite inventory includes focused sustained-activity,
+working-summary, bounded experience-search, and recursive-hot shadow,
+parity, and restart suites. Its previously published
+232-suite baseline passed from
+an immutable candidate image with
 read-only source, no network, fresh Lisp processes, sequential execution, and
 per-suite scratch. The serial observability and publication performance commands
 also pass. Both Python discovery patterns pass. Their generic no-Docker run skips
@@ -48,7 +52,7 @@ the worker integration; its dedicated required profile runs separately with
 `PAI_TEST_IMAGE` bound to the exact candidate image.
 
 `tests/qualification-contract.json` declares one exceptional Lisp suite: the
-required serial benchmark. Structural validation succeeds only when all 224
+required serial benchmark. Structural validation succeeds only when all 243
 published suites are represented. The release command
 `python3 scripts/qualification_contract.py --require-ready` requires every
 declared profile to have a concrete command and no blocked profiles. The

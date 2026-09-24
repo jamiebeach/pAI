@@ -48,7 +48,12 @@
           map-verified-event-row-checkpoint-lines
           event-authority-install event-authority-clear event-authority-report
           event-authority-owns-storage-p
+          event-authority-checkpoint-load
+          event-authority-checkpoint-publish
+          event-authority-checkpoint-source-binding
           event-projection-events event-recent-conversation-events
+          event-root-recent-events
+          event-episodic-context-events
           event-read-event))
 
 (defparameter *event-log-file* (pai-state-path "events.jsonl"))
@@ -111,12 +116,22 @@ already had in hand. The publication layer registers the observer during
 unaffected.")
 
 (defun event-authority-install
-    (kind &key append append-if-head owns-storage replay map restore read-event projection-events recent-conversation
-               report close)
+    (kind &key append append-if-head owns-storage replay map restore read-event
+               projection-events recent-conversation root-recent episodic-events
+               experience-page activity-read checkpoint-load
+               checkpoint-publish checkpoint-source-binding report close)
   "Install exactly one explicit event authority. No write fallback exists
 once this port is installed."
   (unless (and (keywordp kind) (or (null append-if-head) (functionp append-if-head))
+               (or (null activity-read) (functionp activity-read))
+               (or (null root-recent) (functionp root-recent))
+               (or (null episodic-events) (functionp episodic-events))
                (or (null owns-storage) (functionp owns-storage))
+               (or (and (null checkpoint-load) (null checkpoint-publish)
+                        (null checkpoint-source-binding))
+                   (every #'functionp
+                          (list checkpoint-load checkpoint-publish
+                                checkpoint-source-binding)))
                (every #'functionp
                       (list append replay map restore projection-events
                             read-event recent-conversation report close)))
@@ -130,6 +145,13 @@ once this port is installed."
                 :read-event read-event
                 :restore restore :projection-events projection-events
                 :recent-conversation recent-conversation
+                :root-recent root-recent
+                :episodic-events episodic-events
+                :experience-page experience-page
+                :activity-read activity-read
+                :checkpoint-load checkpoint-load
+                :checkpoint-publish checkpoint-publish
+                :checkpoint-source-binding checkpoint-source-binding
                 :report report :close close)))
   kind)
 
@@ -152,6 +174,28 @@ once this port is installed."
   (let ((predicate (and *event-authority-port* (getf *event-authority-port* :owns-storage))))
     (and predicate (eq t (funcall predicate backend)))))
 
+(defun event-authority-checkpoint-load (projection-name)
+  "Load a derived checkpoint through the installed authority composition."
+  (let ((fn (and *event-authority-port*
+                 (getf *event-authority-port* :checkpoint-load))))
+    (and fn (funcall fn projection-name))))
+
+(defun event-authority-checkpoint-publish
+    (projection-name state through-event-id through-position
+     projector-revision policy-revision)
+  "Publish rebuildable projection state without exposing adapter storage."
+  (let ((fn (and *event-authority-port*
+                 (getf *event-authority-port* :checkpoint-publish))))
+    (and fn (funcall fn projection-name state through-event-id through-position
+                     projector-revision policy-revision))))
+
+(defun event-authority-checkpoint-source-binding
+    (through-event-id through-position)
+  "Bind a projection checkpoint to this authority and exact durable prefix."
+  (let ((fn (and *event-authority-port*
+                 (getf *event-authority-port* :checkpoint-source-binding))))
+    (and fn (funcall fn through-event-id through-position))))
+
 (defun event-projection-events ()
   (if *event-authority-port*
       (funcall (getf *event-authority-port* :projection-events))
@@ -167,6 +211,82 @@ once this port is installed."
                  (replay-events :limit (if before-event-id (1+ limit) limit)
                                 :types '("user-message" "agent-message"
                                          "model-response")))))
+
+(defun event-root-recent-events (root-event-id event-types limit before-event-id)
+  "Read bounded causal children before an exact event boundary.
+An installed authority must supply an indexed reader, never a whole-ledger
+fallback. JSONL-only fixtures retain their replay semantics."
+  (unless (and (integerp root-event-id) (plusp root-event-id)
+               (integerp before-event-id) (plusp before-event-id)
+               (integerp limit) (<= 1 limit 32)
+               (listp event-types) (<= 1 (length event-types) 16)
+               (every (lambda (type)
+                        (and (stringp type) (<= 1 (length type) 256)))
+                      event-types))
+    (error "Root-recent read requires exact IDs, bounded types and limit"))
+  (if *event-authority-port*
+      (let ((reader (getf *event-authority-port* :root-recent)))
+        (unless (functionp reader)
+          (error "Indexed root-recent read is unavailable for this authority"))
+        (funcall reader root-event-id event-types limit before-event-id))
+      (let ((matches nil))
+        (dolist (event (replay-events :types event-types))
+          (when (and (equal root-event-id (gethash "caused_by" event))
+                     (< (gethash "id" event 0) before-event-id))
+            (push event matches)))
+        (last (nreverse matches) (min limit (length matches))))))
+
+(defparameter *event-episodic-context-types*
+  '("user-message" "agent-message"
+    "historical-user-message-imported"
+    "historical-agent-message-imported"
+    "conversation-episode-sealed"))
+
+(defun event-episodic-context-events (&optional through-event-id)
+  "Read the exact episodic projector vocabulary from a bounded authority port.
+An installed authority must not satisfy this by restoring a whole-generation
+checkpoint. JSONL-only fixtures retain a bounded typed replay."
+  (let ((reader (and *event-authority-port*
+                     (getf *event-authority-port* :episodic-events))))
+    (cond ((functionp reader) (funcall reader through-event-id))
+          (*event-authority-port*
+           (error "Typed episodic authority read is unavailable"))
+          (t
+           (let* ((all (replay-events))
+                  (prefix (if through-event-id
+                              (let ((position
+                                      (position through-event-id all
+                                                :key (lambda (event)
+                                                       (gethash "id" event))
+                                                :test #'equal)))
+                                (unless position
+                                  (error "Episodic boundary event is absent"))
+                                (subseq all 0 (1+ position)))
+                              all))
+                  (events
+                    (remove-if-not
+                     (lambda (event)
+                       (member (gethash "type" event)
+                               *event-episodic-context-types*
+                               :test #'string=))
+                     prefix)))
+             (when (> (length events) 16384)
+               (error "JSONL episodic input exceeds bounded allowance"))
+             events)))))
+
+(defun event-experience-page (from to before-position limit)
+  "Read one bounded page from the installed authority; never fall back to replay."
+  (let ((reader (getf *event-authority-port* :experience-page)))
+    (unless (functionp reader)
+      (error "Time-based experience search is unavailable for this authority"))
+    (funcall reader from to before-position limit)))
+
+(defun event-read-activity-context (reference-id through-id)
+  "Read a bounded original-ledger activity via the installed authority only."
+  (let ((reader (getf *event-authority-port* :activity-read)))
+    (unless (functionp reader)
+      (error "Sustained activity storage is unavailable for this authority"))
+    (funcall reader reference-id through-id)))
 
 (defun event-read-event (event-id &key event-type)
   "Read one exact durable event without materializing the ledger."

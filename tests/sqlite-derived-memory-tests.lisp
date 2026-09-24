@@ -119,8 +119,8 @@
                          :fixture-schema-version)
             (%sqlite-step handle statement :fixture-schema-version +sqlite-row+)
             (setf graph-table-count (%sqlite-column-int64 statement 0)))
-          (sdm-check "fresh derived store declares graph-capable format 2"
-                     (and (string= "2" version)
+          (sdm-check "fresh derived store declares reviewed-graph format 4"
+                     (and (string= "4" version)
                           (= 3 graph-table-count))))
         (let ((capabilities (memory-storage-capabilities backend)))
           (sdm-check
@@ -203,7 +203,7 @@
                     (%sqlite-step handle statement :fixture-v1-result +sqlite-row+)
                     (setf table-count (%sqlite-column-int64 statement 0)))
                   (sdm-check "version-1 migration is additive and preserves checkpoint state"
-                             (and (string= "2" version)
+                             (and (string= "4" version)
                                   (= 3 table-count)
                                   (= 4 (gethash "through_event_id" kept))
                                   (eq t (gethash "kept"
