@@ -10131,6 +10131,31 @@ Model prose and an executed-but-error tool result never prove a reply."
                 (return-from %recursive-reconcile-peer-bridge-one t)))))))
   nil))
 
+(defun %recursive-peer-failure-settled-authoritatively-p (root-id)
+  "Read current authority when the checkpoint-backed replay may be behind."
+  (let ((found nil))
+    (multiple-value-bind (complete-p ignored-last-id ignored-count)
+        (map-events
+         (lambda (event)
+           (when (and (equal root-id (gethash "caused_by" event))
+                      (member (gethash "type" event "")
+                              '("recursive-peer-message-result"
+                                "recursive-peer-message-disposition"
+                                "recursive-peer-message-retry-opened"
+                                "recursive-stimulus-result"
+                                "recursive-stimulus-disposition")
+                              :test #'string=))
+             (setf found t)))
+         :types '("recursive-peer-message-result"
+                  "recursive-peer-message-disposition"
+                  "recursive-peer-message-retry-opened"
+                  "recursive-stimulus-result"
+                  "recursive-stimulus-disposition"))
+      (declare (ignore ignored-last-id ignored-count))
+      (unless complete-p
+        (error "Peer failure settlement authority scan was incomplete")))
+    found))
+
 (defun %recursive-reconcile-peer-failure-one (events)
   "Settle one failed peer turn left without its board disposition.
 
@@ -10184,7 +10209,9 @@ thread identity.  Never retry or manufacture a reply here."
        (let ((failure (gethash root-id failures))
              (disposition-type (gethash root-id requests)))
          (when (and disposition-type failure
-                    (not (gethash root-id settled)))
+                    (not (gethash root-id settled))
+                    (not (%recursive-peer-failure-settled-authoritatively-p
+                          root-id)))
            (let ((failure-payload (%recursive-event-payload failure)))
              (%conversation-append-readable
               disposition-type

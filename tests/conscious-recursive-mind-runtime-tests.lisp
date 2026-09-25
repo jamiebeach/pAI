@@ -6612,7 +6612,21 @@
                                   (gethash "type" (first writes)))
                          (string= "failed"
                                   (gethash "disposition"
-                                           (gethash "payload" (first writes)))))))
+                                           (gethash "payload" (first writes))))))
+         (setf writes nil)
+         (let* ((settlement
+                  (crm-event 81104 "recursive-stimulus-disposition"
+                             (obj "disposition" "failed") 81101))
+                (*event-authority-port*
+                  (list :map
+                        (lambda (visitor &rest arguments)
+                          (declare (ignore arguments))
+                          (funcall visitor settlement)
+                          (values t 81104 1)))))
+           (crm-check "current authority prevents duplicate settlement when replay is stale"
+                       (and (not (%recursive-reconcile-peer-failure-one
+                                  (list root request failure)))
+                            (null writes)))))
     (setf (symbol-function '%conversation-append-readable) original)))
 
 (format t "~%Durable recursive mind: ~d passed, ~d failed~%"
