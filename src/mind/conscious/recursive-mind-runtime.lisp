@@ -10131,6 +10131,64 @@ Model prose and an executed-but-error tool result never prove a reply."
                 (return-from %recursive-reconcile-peer-bridge-one t)))))))
   nil))
 
+(defun %recursive-reconcile-legacy-peer-failure-one (events)
+  "Settle one failed direct-peer turn left open by the retired executor.
+
+The failed MODEL-RESPONSE is already the durable terminal provider outcome.  A
+legacy direct-peer turn additionally required a peer disposition for the board
+projection; interruption between those rows otherwise leaves the message in
+`processing` forever.  Never retry or manufacture a reply here."
+  (let ((roots (make-hash-table :test #'equal))
+        (legacy-requests (make-hash-table :test #'equal))
+        (failures (make-hash-table :test #'equal))
+        (settled (make-hash-table :test #'equal)))
+    (dolist (event events)
+      (when (equal *conscious-recursive-mind-agent-id*
+                   (gethash "agent_id" event))
+        (let* ((type (gethash "type" event ""))
+               (root-id (gethash "caused_by" event))
+               (payload (%recursive-event-payload event)))
+          (cond
+            ((string= type "peer-message-received")
+             (setf (gethash (gethash "id" event) roots) event))
+            ((and (string= type "model-request")
+                  (integerp root-id)
+                  (hash-table-p payload)
+                  (string= (format nil "thread:peer-message:~a:~a"
+                                   *conscious-recursive-mind-agent-id* root-id)
+                           (gethash "thread_id" payload "")))
+             (setf (gethash root-id legacy-requests) t))
+            ((and (string= type "model-response")
+                  (integerp root-id)
+                  (hash-table-p payload)
+                  (string= "failed" (gethash "status" payload "")))
+             (setf (gethash root-id failures) event))
+            ((and (integerp root-id)
+                  (member type '("recursive-peer-message-result"
+                                 "recursive-peer-message-disposition"
+                                 "recursive-peer-message-retry-opened")
+                          :test #'string=))
+             (setf (gethash root-id settled) t))))))
+    (maphash
+     (lambda (root-id root)
+       (declare (ignore root))
+       (let ((failure (gethash root-id failures)))
+         (when (and (gethash root-id legacy-requests) failure
+                    (not (gethash root-id settled)))
+           (let ((failure-payload (%recursive-event-payload failure)))
+             (%conversation-append-readable
+              "recursive-peer-message-disposition"
+              (obj "schema_version" 1
+                   "disposition" "failed"
+                   "failure_event_id" (gethash "id" failure)
+                   "error_code" (gethash "error_code" failure-payload
+                                         "provider-failed")
+                   "settled_at" (get-universal-time))
+              :caused-by root-id)
+             (return-from %recursive-reconcile-legacy-peer-failure-one t)))))
+     roots)
+    nil))
+
 (defun conscious-recursive-stimulus-one ()
   "Advance at most one safe retained stimulus on the existing quiet wake.
 The ledger projection owns completion. Failed and uncertain roots are not
@@ -10140,6 +10198,9 @@ automatically retried, and this path does not invent peer-specific actions."
       (obj "schema_version" 1 "status" "preempted")))
   (bt:with-lock-held (*conscious-recursive-mind-lock*)
     (let* ((events (%recursive-thread-events))
+           (legacy-failure
+             (%recursive-reconcile-legacy-peer-failure-one events))
+           (events (if legacy-failure (%recursive-thread-events) events))
            (reconciled (%recursive-reconcile-peer-bridge-one events))
            (events (if reconciled (%recursive-thread-events) events))
            (covered (%recursive-reconcile-activity-followers-one
@@ -10191,6 +10252,9 @@ selection but must return one of the offered candidates."
   "Arbitrate within an existing quiet wake; never invent a new timer."
   (bt:with-lock-held (*conscious-recursive-mind-lock*)
     (let* ((events (%recursive-thread-events))
+           (legacy-failure
+             (%recursive-reconcile-legacy-peer-failure-one events))
+           (events (if legacy-failure (%recursive-thread-events) events))
            (reconciled (%recursive-reconcile-peer-bridge-one events))
            (events (if reconciled (%recursive-thread-events) events))
            (observed (%recursive-reconcile-observed-stimuli-one

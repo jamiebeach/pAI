@@ -6530,7 +6530,53 @@
                                      (append events (list (crm-event 80005 "recursive-stimulus-result"
                                                                      (obj "status" "completed") 80004)))
                                      "recursive-fixture" 1)))))
-      (setf (symbol-function '%conversation-append-readable) original)))
+       (setf (symbol-function '%conversation-append-readable) original)))
+
+(let* ((agent-id "recursive-fixture")
+       (root (crm-event 81001 "peer-message-received"
+                        (obj "board_owner_id" agent-id
+                             "thread_id" "synthetic-thread"
+                             "message_id" "synthetic-message"
+                             "sender_id" "synthetic-peer"
+                             "text" "Synthetic request")))
+       (request (crm-event 81002 "model-request"
+                           (obj "thread_id"
+                                "thread:peer-message:recursive-fixture:81001"
+                                "model_call_id" "synthetic-call") 81001))
+       (failure (crm-event 81003 "model-response"
+                           (obj "thread_id"
+                                "thread:peer-message:recursive-fixture:81001"
+                                "model_call_id" "synthetic-call"
+                                "status" "failed"
+                                "error_code" "synthetic-provider-failure") 81001))
+       (events (list root request failure))
+       (original (symbol-function '%conversation-append-readable))
+       (writes nil))
+  (unwind-protect
+       (progn
+         (setf (symbol-function '%conversation-append-readable)
+               (lambda (type payload &key caused-by)
+                 (let ((event (crm-event (+ 81004 (length writes))
+                                         type payload caused-by)))
+                   (push event writes) (values (gethash "id" event) event))))
+         (crm-check "failed legacy peer turn receives one terminal disposition"
+                    (and (%recursive-reconcile-legacy-peer-failure-one events)
+                         (= 1 (length writes))
+                         (string= "recursive-peer-message-disposition"
+                                  (gethash "type" (first writes)))
+                         (string= "failed"
+                                  (gethash "disposition"
+                                           (gethash "payload" (first writes))))
+                         (= 81003
+                            (gethash "failure_event_id"
+                                     (gethash "payload" (first writes))))))
+         (crm-check "legacy peer failure reconciliation is idempotent"
+                    (not (%recursive-reconcile-legacy-peer-failure-one
+                          (append events (reverse writes)))))
+         (crm-check "legacy peer failure without its request is not settled"
+                    (not (%recursive-reconcile-legacy-peer-failure-one
+                          (list root failure)))))
+    (setf (symbol-function '%conversation-append-readable) original)))
 
 (format t "~%Durable recursive mind: ~d passed, ~d failed~%"
         *crm-pass* *crm-fail*)
