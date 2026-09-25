@@ -10131,15 +10131,16 @@ Model prose and an executed-but-error tool result never prove a reply."
                 (return-from %recursive-reconcile-peer-bridge-one t)))))))
   nil))
 
-(defun %recursive-reconcile-legacy-peer-failure-one (events)
-  "Settle one failed direct-peer turn left open by the retired executor.
+(defun %recursive-reconcile-peer-failure-one (events)
+  "Settle one failed peer turn left without its board disposition.
 
 The failed MODEL-RESPONSE is already the durable terminal provider outcome.  A
-legacy direct-peer turn additionally required a peer disposition for the board
-projection; interruption between those rows otherwise leaves the message in
-`processing` forever.  Never retry or manufacture a reply here."
+peer turn additionally requires a disposition for the board projection;
+interruption between those rows otherwise leaves the message in `processing`
+forever.  Accept only the exact retired direct-peer or current generic-stimulus
+thread identity.  Never retry or manufacture a reply here."
   (let ((roots (make-hash-table :test #'equal))
-        (legacy-requests (make-hash-table :test #'equal))
+        (requests (make-hash-table :test #'equal))
         (failures (make-hash-table :test #'equal))
         (settled (make-hash-table :test #'equal)))
     (dolist (event events)
@@ -10153,11 +10154,19 @@ projection; interruption between those rows otherwise leaves the message in
              (setf (gethash (gethash "id" event) roots) event))
             ((and (string= type "model-request")
                   (integerp root-id)
-                  (hash-table-p payload)
-                  (string= (format nil "thread:peer-message:~a:~a"
+                  (hash-table-p payload))
+             (let ((thread-id (gethash "thread_id" payload "")))
+               (cond
+                 ((string= (format nil "thread:peer-message:~a:~a"
                                    *conscious-recursive-mind-agent-id* root-id)
-                           (gethash "thread_id" payload "")))
-             (setf (gethash root-id legacy-requests) t))
+                           thread-id)
+                  (setf (gethash root-id requests)
+                        "recursive-peer-message-disposition"))
+                 ((string= (format nil "thread:stimulus:~a:~a"
+                                   *conscious-recursive-mind-agent-id* root-id)
+                           thread-id)
+                  (setf (gethash root-id requests)
+                        "recursive-stimulus-disposition")))))
             ((and (string= type "model-response")
                   (integerp root-id)
                   (hash-table-p payload)
@@ -10172,12 +10181,13 @@ projection; interruption between those rows otherwise leaves the message in
     (maphash
      (lambda (root-id root)
        (declare (ignore root))
-       (let ((failure (gethash root-id failures)))
-         (when (and (gethash root-id legacy-requests) failure
+       (let ((failure (gethash root-id failures))
+             (disposition-type (gethash root-id requests)))
+         (when (and disposition-type failure
                     (not (gethash root-id settled)))
            (let ((failure-payload (%recursive-event-payload failure)))
              (%conversation-append-readable
-              "recursive-peer-message-disposition"
+              disposition-type
               (obj "schema_version" 1
                    "disposition" "failed"
                    "failure_event_id" (gethash "id" failure)
@@ -10185,7 +10195,7 @@ projection; interruption between those rows otherwise leaves the message in
                                          "provider-failed")
                    "settled_at" (get-universal-time))
               :caused-by root-id)
-             (return-from %recursive-reconcile-legacy-peer-failure-one t)))))
+             (return-from %recursive-reconcile-peer-failure-one t)))))
      roots)
     nil))
 
@@ -10199,7 +10209,7 @@ automatically retried, and this path does not invent peer-specific actions."
   (bt:with-lock-held (*conscious-recursive-mind-lock*)
     (let* ((events (%recursive-thread-events))
            (legacy-failure
-             (%recursive-reconcile-legacy-peer-failure-one events))
+             (%recursive-reconcile-peer-failure-one events))
            (events (if legacy-failure (%recursive-thread-events) events))
            (reconciled (%recursive-reconcile-peer-bridge-one events))
            (events (if reconciled (%recursive-thread-events) events))
@@ -10253,7 +10263,7 @@ selection but must return one of the offered candidates."
   (bt:with-lock-held (*conscious-recursive-mind-lock*)
     (let* ((events (%recursive-thread-events))
            (legacy-failure
-             (%recursive-reconcile-legacy-peer-failure-one events))
+             (%recursive-reconcile-peer-failure-one events))
            (events (if legacy-failure (%recursive-thread-events) events))
            (reconciled (%recursive-reconcile-peer-bridge-one events))
            (events (if reconciled (%recursive-thread-events) events))
