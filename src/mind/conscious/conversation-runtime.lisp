@@ -1525,8 +1525,24 @@ so forwarding those transport labels would violate its closed row schema."
       (maphash (lambda (key value) (setf (gethash key sections) value))
                (gethash "section_character_budgets" budget))
       (let* ((size (gethash "rendered_characters" history-report 0))
-             (extra (max 0 (- size (gethash "conversation-evidence" sections 0)))))
-        (incf (gethash "total_character_budget" copy) extra)
+             (extra (max 0 (- size (gethash "conversation-evidence" sections 0))))
+             ;; Private recursive roots may carry a runtime-assembled current
+             ;; stimulus larger than the operator-input allowance.  The native
+             ;; final user message stays exact, so its evidenced envelope row
+             ;; must stay exact too; silently refusing that row makes the
+             ;; subsequent equality boundary fail after an already-paid
+             ;; attention call.  Expand only this captured request's detached
+             ;; budget, still beneath the assembler's 65,536-character record
+             ;; bound and the later provider/request-fit boundary.
+             (stimulus-size (length prompt))
+             (stimulus-extra
+               (max 0 (- stimulus-size
+                         (gethash "triggering-stimuli" sections 0)))))
+        (incf (gethash "total_character_budget" copy)
+              (+ extra stimulus-extra))
+        (setf (gethash "triggering-stimuli" sections)
+              (max stimulus-size
+                   (gethash "triggering-stimuli" sections 0)))
         (setf (gethash "total_character_budget" copy)
               (max (gethash "total_character_budget" copy)
                    (+ size (loop for name in '("identity-instructions" "sensorium"

@@ -529,7 +529,54 @@
                      (progn
                        (%conversation-model-messages assembled nil "wrong turn")
                        nil)
-                   (error () t))))
+                   (error () t)))
+      (let* ((long-prompt
+               (concatenate 'string (make-string 8500 :initial-element #\x)
+                            " exact-private-stimulus-tail"))
+             (long-spec
+               (%conversation-assembly-spec
+                captured-prefix 41 long-prompt *agent-id* profile
+                "local" "terminal"))
+             (long-context
+               (make-conscious-assembly-context
+                :pulse-id "pulse:long-private-root:fixture"
+                :purpose "respond" :audience (gethash "audience" long-spec)
+                :runtime-revision "fixture"
+                :conscious-state-revision 8 :clock-identity "fixture-clock"
+                :total-character-budget
+                (gethash "total_character_budget" long-spec)
+                :section-character-budgets
+                (gethash "section_character_budgets" long-spec)
+                :sections (gethash "sections" long-spec)
+                :eligible-evidence-ids (gethash "eligible_evidence_ids" long-spec)
+                :available-tools (gethash "available_tools" long-spec)
+                :permitted-proposal-kinds
+                (gethash "permitted_proposal_kinds" long-spec)
+                :publication-constraints
+                (gethash "publication_constraints" long-spec)
+                :remaining-budget (gethash "remaining_budget" long-spec)
+                :pre-render-refusals
+                (gethash "pre_render_refusals" long-spec (vector))))
+             (long-assembled
+               (conscious-context-assemble
+                (obj "state_revision" 8 "composition_hash" "fixture-state")
+                long-context))
+             (long-messages
+               (%conversation-model-messages long-assembled nil long-prompt))
+             (trigger
+               (find "triggering-stimuli"
+                     (gethash "private_request" long-assembled)
+                     :key (lambda (row) (gethash "section" row ""))
+                     :test #'string=)))
+        (q45-check "long private stimulus receives exact detached section capacity"
+                   (>= (gethash "triggering-stimuli"
+                                (gethash "section_character_budgets" long-spec))
+                       (length long-prompt)))
+        (q45-check "long private stimulus survives assembly and native rendering exactly"
+                   (and trigger
+                        (string= long-prompt (gethash "content" trigger ""))
+                        (search "exact-private-stimulus-tail"
+                                (gethash "content" (car (last long-messages)) ""))))))
     (q45-check "work profile controls advertised tools and proposal kinds"
                (and (equalp #( "search-files")
                             (gethash "available_tools" spec))
