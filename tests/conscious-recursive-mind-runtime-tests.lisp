@@ -4304,10 +4304,9 @@
                            (gethash "thread_count"
                                     (gethash "consolidation" inspection)))))
         (crm-check
-         "grouped attention cannot cite evidence from an unselected thread"
-         (handler-case
-             (progn
-               (%recursive-curiosity-attention-choice
+         "grouped attention derives evidence from the selected thread"
+         (let ((choice
+                 (%recursive-curiosity-attention-choice
                 (obj
                  "role" "assistant" "content" :null
                  "tool_calls"
@@ -4329,9 +4328,9 @@
                         (gethash "observation_event_ids" (aref presented 0))
                         0)))
                      nil)))))
-                presented)
-               nil)
-           (error () t)))
+                presented)))
+           (equalp (gethash "observation_event_ids" (aref presented 1))
+                   (gethash "evidence_event_ids" choice))))
         (progn
           (setf *crm-provider-script*
                 (list
@@ -4461,6 +4460,12 @@
              (obj "role" "assistant" "content" :null
                   "tool_calls" (coerce calls 'vector))))))
 
+(defun crm-provider-response-with-calls-and-reasoning (calls reasoning-details)
+  (let* ((response (crm-provider-response-with-calls calls))
+         (message (gethash "message" (aref (gethash "choices" response) 0))))
+    (setf (gethash "reasoning_details" message) reasoning-details)
+    response))
+
 ;; Wire normalization owns every accepted ID, rejects a malformed retained
 ;; prefix atomically, and treats excess untrusted calls as inert degradation.
 (let* ((*conscious-recursive-mind-tools-enabled-p* t)
@@ -4483,6 +4488,26 @@
                                     (gethash "id" (aref calls 1))))
                       (search ":0" (gethash "id" (aref calls 0)) :from-end t)
                       (search ":1" (gethash "id" (aref calls 1)) :from-end t)))))
+  (let* ((*conscious-recursive-mind-max-reasoning-details-characters* 128)
+         (oversized
+           (crm-provider-response-with-calls-and-reasoning
+            (list (crm-native-call "provider-reasoning" "brave-search"
+                                   "{\"query\":\"alpha\",\"count\":2}"))
+            (vector (obj "type" "reasoning.encrypted"
+                         "data" (make-string 256 :initial-element #\x))))))
+    (multiple-value-bind (message arguments overflow)
+        (%recursive-normalize-assistant-message
+         oversized "thread:reasoning" "model:reasoning" t)
+      (crm-check "oversized reasoning does not reject a valid native tool call"
+                 (and (= 1 (length (gethash "tool_calls" message)))
+                      (= 1 (length arguments))))
+      (crm-check "oversized opaque reasoning is omitted whole and receipted"
+                 (and (not (nth-value 1
+                             (gethash "reasoning_details" message)))
+                      (string= "omitted-over-bound"
+                               (gethash "reasoning_details_status" overflow))
+                      (> (gethash "reasoning_details_encoded_characters" overflow)
+                         (gethash "reasoning_details_limit_characters" overflow))))))
   (let* ((bad-retained
            (crm-provider-response-with-calls
             (list

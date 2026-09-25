@@ -133,6 +133,12 @@ as outcome-unknown.  Live calls use the matching provider wall-clock limit.")
     *conscious-recursive-mind-operator-waiters*))
 (defparameter *conscious-recursive-mind-max-total-tool-result-characters* 262144)
 (defparameter *conscious-recursive-mind-max-tool-calls-per-response* 4)
+(defparameter *conscious-recursive-mind-max-reasoning-details-characters* 524288
+  "Largest exact provider reasoning_details value retained for native tool
+continuation.  Larger opaque values are omitted as a whole rather than
+partially truncating provider-signed reasoning blocks or rejecting an otherwise
+valid tool response.  The recursive hot shadow admits events up to one MiB, so
+this leaves room for the tool batch and receipt metadata.")
 (defvar *conscious-conversation-turn-memory-report* nil)
 (defvar *conscious-conversation-turn-history-report* nil)
 (defvar *conscious-recursive-mind-lock*
@@ -1548,7 +1554,8 @@ fix a genuine mismatch."))
          (content (gethash "content" message))
          (reasoning-details (gethash "reasoning_details" message))
          (reasoning-details-present-p
-           (nth-value 1 (gethash "reasoning_details" message))))
+           (nth-value 1 (gethash "reasoning_details" message)))
+         (reasoning-overflow nil))
     ;; Tool use is closed during final synthesis, yet a model that wanted
     ;; one more tool sometimes emits a call anyway. If it also produced a
     ;; usable answer, keep the answer and drop the call; otherwise treat it
@@ -1573,9 +1580,22 @@ fix a genuine mismatch."))
             (unless (vectorp reasoning-details)
               (error "Recursive reasoning_details has invalid wire shape"))
             (let ((encoded (shasht:write-json reasoning-details nil)))
-              (when (> (length encoded) 131072)
-                (error "Recursive reasoning_details exceeds its bound"))
-              (setf reasoning-details (shasht:read-json encoded))))
+              (if (> (length encoded)
+                     *conscious-recursive-mind-max-reasoning-details-characters*)
+                  ;; REASONING_DETAILS is opaque provider state and can contain
+                  ;; signed/encrypted blocks.  Cutting inside it or asking a
+                  ;; second model to summarize it would manufacture an invalid
+                  ;; continuation.  Keep the valid tool call, omit the whole
+                  ;; oversized optional field, and journal content-free facts.
+                  (setf reasoning-details-present-p nil
+                        reasoning-details nil
+                        reasoning-overflow
+                        (obj "reasoning_details_status" "omitted-over-bound"
+                             "reasoning_details_encoded_characters"
+                             (length encoded)
+                             "reasoning_details_limit_characters"
+                             *conscious-recursive-mind-max-reasoning-details-characters*))
+                  (setf reasoning-details (shasht:read-json encoded)))))
           (let* ((total (length calls))
                  (accepted-count
                    (min total
@@ -1676,7 +1696,7 @@ fix a genuine mismatch."))
             (let ((owned
                     (obj "role" "assistant" "content" :null
                          "tool_calls" owned-calls))
-                  (overflow nil))
+                  (overflow reasoning-overflow))
               (when (and reasoning-details-present-p
                          (not (eq reasoning-details :null)))
                 (setf (gethash "reasoning_details" owned) reasoning-details))
@@ -1693,10 +1713,12 @@ fix a genuine mismatch."))
                                      name
                                      "<invalid>")
                                  labels))
-                  (setf overflow
-                        (obj "dropped_tool_call_count" (- total accepted-count)
-                             "dropped_tool_names"
-                             (coerce (nreverse labels) 'vector)))))
+                  (unless (hash-table-p overflow)
+                    (setf overflow (obj)))
+                  (setf (gethash "dropped_tool_call_count" overflow)
+                        (- total accepted-count)
+                        (gethash "dropped_tool_names" overflow)
+                        (coerce (nreverse labels) 'vector))))
               (values owned parsed-arguments overflow nil))))
         (progn
           (unless (%recursive-nonempty-string-p content 65536)
@@ -3324,10 +3346,9 @@ the complete failure receipt and may safely close this focus attempt."
                          (if (hash-table-p accounting) accounting :null))))))
             (when (and (eq :accepted (first outcome))
                        (hash-table-p (fourth outcome)))
-             (setf (gethash "dropped_tool_call_count" payload)
-                   (gethash "dropped_tool_call_count" (fourth outcome))
-                    (gethash "dropped_tool_names" payload)
-                    (gethash "dropped_tool_names" (fourth outcome))))
+              (loop for key being the hash-keys of (fourth outcome)
+                      using (hash-value value)
+                    do (setf (gethash key payload) value)))
             (when (and (eq :accepted (first outcome)) (fifth outcome))
               (setf (gethash "pseudo_tool_envelope" payload) t))
             (%conversation-append-readable
@@ -6756,12 +6777,11 @@ require a mention and they do not infer operator intent from prompt text."
                   "properties"
                   (obj "question" (obj "type" "string")
                        "source_motive_ids"
-                       (obj "type" "array" "items" (obj "type" "string"))
-                       "evidence_event_ids"
-                       (obj "type" "array" "items" (obj "type" "integer")))
+                       (obj "type" "array" "items" (obj "type" "string")))
                   "required"
-                  (vector "question" "source_motive_ids"
-                          "evidence_event_ids"))))))
+                  (vector "question" "source_motive_ids"))))))
+
+(define-condition curiosity-attention-choice-outside-register (simple-error) ())
 
 (defun %recursive-curiosity-attention-choice (message open-register)
   "Validate one native attention choice, or return NIL for a durable decline."
@@ -6778,8 +6798,6 @@ require a mention and they do not infer operator intent from prompt text."
            (arguments (and (stringp encoded) (shasht:read-json encoded)))
            (source-ids (and (hash-table-p arguments)
                             (gethash "source_motive_ids" arguments)))
-           (evidence (and (hash-table-p arguments)
-                          (gethash "evidence_event_ids" arguments)))
            (rows (%recursive-items open-register))
            (selected-source-list
              (if (vectorp source-ids) (coerce source-ids 'list) nil))
@@ -6807,8 +6825,11 @@ require a mention and they do not infer operator intent from prompt text."
                (string= "function" (gethash "type" call ""))
                (string= "choose-curiosity" (gethash "name" function ""))
                (hash-table-p arguments)
-               (equal '("evidence_event_ids" "question" "source_motive_ids")
-                      (%recursive-object-keys arguments))
+               (member (%recursive-object-keys arguments)
+                       '(("question" "source_motive_ids")
+                         ("evidence_event_ids" "question"
+                          "source_motive_ids"))
+                       :test #'equal)
                (%recursive-nonempty-string-p
                 (gethash "question" arguments) 1024)
                (vectorp source-ids) (<= 1 (length source-ids) 16)
@@ -6818,13 +6839,16 @@ require a mention and they do not infer operator intent from prompt text."
                (every (lambda (motive-id)
                         (find motive-id eligible-motives :test #'string=))
                       (coerce source-ids 'list))
-               (vectorp evidence) (<= 1 (length evidence) 32)
-               (= (length evidence)
-                  (length (remove-duplicates (coerce evidence 'list)
-                                             :test #'equal)))
-               (every (lambda (id) (find id selected-evidence :test #'equal))
-                      (coerce evidence 'list)))
-        (error "Curiosity attention choice is outside its sealed register"))
+               (<= 1 (length selected-evidence) 32))
+        (error 'curiosity-attention-choice-outside-register
+               :format-control
+               "Curiosity attention choice is outside its sealed register"))
+      ;; Evidence identity is authority-owned.  Providers choose motives, but
+      ;; never copy or expand event IDs from the prompt's knowledge frontier.
+      ;; Replace a legacy provider-supplied field rather than trusting it.
+      (setf (gethash "evidence_event_ids" arguments)
+            (coerce (remove-duplicates selected-evidence :test #'equal)
+                    'vector))
       arguments)))
 
 (defun %recursive-curiosity-attention-terminal-p (event opened-id)
@@ -7001,6 +7025,15 @@ require a mention and they do not infer operator intent from prompt text."
                      message open-register)
                     (list :accepted message
                           (%conversation-response-usage response))))
+              (curiosity-attention-choice-outside-register (condition)
+                ;; The provider completed successfully, but its proposed
+                ;; evidence was not in the sealed page.  Preserve the refusal
+                ;; while settling this page as a decline; retrying the same
+                ;; immutable register only repeats a paid invalid proposal.
+                (list :invalid-choice "invalid-provider-choice"
+                      (princ-to-string condition) nil
+                      (string-downcase
+                       (symbol-name (type-of condition)))))
               (error (condition)
                 (multiple-value-bind (code reason status condition-type)
                     (%conversation-provider-failure-details condition)
@@ -7020,7 +7053,9 @@ require a mention and they do not infer operator intent from prompt text."
                 "reason" (third outcome) "http_status" (fourth outcome)
                 "condition_type" (fifth outcome)))
        :caused-by opened-id)
-      (if (eq :accepted (first outcome)) (second outcome) :failed))))
+      (cond ((eq :accepted (first outcome)) (second outcome))
+            ((eq :invalid-choice (first outcome)) :invalid-choice)
+            (t :failed)))))
 
 (defun conscious-recursive-curiosity-attention-one ()
   "Choose or decline one page, then quiesce only after the full register."

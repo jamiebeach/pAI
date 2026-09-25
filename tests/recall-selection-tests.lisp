@@ -23,7 +23,7 @@
              :trigger-event-id 41 :as-of 1000)))
   (rs-check "query plan is closed and versioned"
             (and (= 1 (gethash "schema_version" plan))
-                 (string= "personal-recall-selection-v1"
+                 (string= "personal-recall-selection-v2"
                           (gethash "policy_revision" plan))
                  (eq t (gethash "operator_fact_query" plan))
                  (string= "historical" (gethash "requested_time_scope" plan))
@@ -135,6 +135,20 @@
                          (build-recall-query-plan
                           "What condition did I have earlier?"
                           :operator-binding "operator:fixture"))))
+
+(let* ((tail "What are my pets' names?")
+       (assembled (concatenate 'string (make-string 9000 :initial-element #\x)
+                               tail))
+       (plan (build-recall-query-plan assembled
+                                      :operator-binding "operator:fixture")))
+  (rs-check "assembled recursive prompts retain their bounded current stimulus"
+            (and (eq t (gethash "original_query_truncated" plan))
+                 (= *personal-recall-query-character-budget*
+                    (length (gethash "original_query" plan)))
+                 (search tail (gethash "original_query" plan) :from-end t)
+                 (eq t (gethash "operator_fact_query" plan))
+                 (find "pet" (gethash "requested_categories" plan)
+                       :test #'string=))))
 
 ;; Fixed mature selector corpus: the useful row follows distractors beyond the
 ;; source discovery ceilings.  This measures deterministic fusion only; it is

@@ -8,7 +8,17 @@
           recall-selection-report))
 
 (defparameter *personal-recall-selection-revision*
-  "personal-recall-selection-v1")
+  "personal-recall-selection-v2")
+
+(defparameter *personal-recall-query-character-budget* 8000)
+
+(defun %recall-selection-bounded-stimulus (stimulus)
+  "Keep the current/root stimulus at the tail of an assembled recursive prompt."
+  (let ((length (length stimulus)))
+    (if (<= length *personal-recall-query-character-budget*)
+        stimulus
+        (subseq stimulus
+                (- length *personal-recall-query-character-budget*)))))
 
 (defparameter *personal-recall-stop-terms*
   '("a" "an" "and" "are" "did" "do" "earlier" "for" "have" "i"
@@ -70,11 +80,11 @@
   (unless (and (stringp stimulus)
                (plusp (length (string-trim '(#\Space #\Tab #\Newline #\Return)
                                             stimulus)))
-               (<= (length stimulus) 8000)
                (stringp policy) (plusp (length policy)))
     (error "Recall query plan inputs are invalid"))
-  (let* ((terms (%recall-selection-terms stimulus))
-         (lower (string-downcase stimulus))
+  (let* ((bounded-stimulus (%recall-selection-bounded-stimulus stimulus))
+         (terms (%recall-selection-terms bounded-stimulus))
+         (lower (string-downcase bounded-stimulus))
          (categories
            (remove-if
             (lambda (category)
@@ -100,7 +110,10 @@
          (personal-p (and operator-referent-p categories)))
     (obj "schema_version" 1
          "policy_revision" policy
-         "original_query" (copy-seq stimulus)
+         "original_query" (copy-seq bounded-stimulus)
+         "original_query_truncated" (if (> (length stimulus)
+                                                *personal-recall-query-character-budget*)
+                                          t nil)
          "normalized_terms" (coerce terms 'vector)
          "requested_categories" (coerce categories 'vector)
          "requested_time_scope" time-scope
