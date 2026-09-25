@@ -21,6 +21,10 @@
   '("suitable" "unsuitable"))
 (defparameter *conscious-motivation-satisfaction-degrees*
   '("partial" "full"))
+(defparameter *conscious-motivation-subject-label-bound* 1024
+  "Maximum exact subject label length admitted by the curiosity observation
+schema.  This matches every model-facing curiosity question schema so an
+already-valid choice cannot fail during durable observation construction.")
 
 (defun %motivation-null-p (value)
   (or (null value) (eq value :null)))
@@ -147,7 +151,8 @@
      (%lifecycle-text-p (gethash "mind_identity_id" payload) 128)
      (member (gethash "subject_type" payload)
              *conscious-lifecycle-semantic-subject-types* :test #'string=)
-     (%lifecycle-text-p (gethash "subject_label" payload) 512)
+     (%lifecycle-text-p (gethash "subject_label" payload)
+                        *conscious-motivation-subject-label-bound*)
      refs roots
      (member (gethash "reinforcement_kind" payload)
              *conscious-motivation-reinforcement-kinds* :test #'string=)

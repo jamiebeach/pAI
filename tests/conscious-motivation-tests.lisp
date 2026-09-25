@@ -37,6 +37,39 @@
 
 (format t "~%== Q5M curiosity semantic accumulation ==~%")
 
+(let ((maximum-label (make-string 1024 :initial-element #\Q)))
+  (q5m-check "observation admits the model-facing curiosity question bound"
+             (= 1024
+                (length
+                 (gethash
+                  "subject_label"
+                  (conscious-curiosity-observation-payload
+                   :request-id "obs-max-label"
+                   :mind-identity-id "dev-persona"
+                   :subject-type "question" :subject-label maximum-label
+                   :subject-refs '("question:max-label")
+                   :reinforcement-kind "novel-observation"
+                   :supporting-event-ids '(1)
+                   :source-revision "q5m-fixture-v1"
+                   :actor-runtime-revision "q5m-runtime-v1"
+                   :observed-at 100)))))
+  (q5m-check "observation still rejects a curiosity question over its bound"
+             (handler-case
+                 (progn
+                   (conscious-curiosity-observation-payload
+                    :request-id "obs-over-label"
+                    :mind-identity-id "dev-persona"
+                    :subject-type "question"
+                    :subject-label (concatenate 'string maximum-label "Q")
+                    :subject-refs '("question:over-label")
+                    :reinforcement-kind "novel-observation"
+                    :supporting-event-ids '(1)
+                    :source-revision "q5m-fixture-v1"
+                    :actor-runtime-revision "q5m-runtime-v1"
+                    :observed-at 100)
+                   nil)
+               (error () t))))
+
 (let* ((first (q5m-observation
                2 "obs-1" '("topic:b" "topic:a")
                "novel-observation" '(1) 100))

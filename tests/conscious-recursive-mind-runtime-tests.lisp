@@ -2857,10 +2857,11 @@
                "status" "completed" "audience" "private"
                "content" "The answer exposes a sharper unresolved edge."
                "completed_at" (get-universal-time))))
+       (refined-question (make-string 538 :initial-element #\R))
        (arguments
-         (shasht:write-json
-          (obj "question" "Which sharper edge does the result expose?"
-               "source_motive_ids" source-ids) nil)))
+          (shasht:write-json
+           (obj "question" refined-question
+                "source_motive_ids" source-ids) nil)))
   (declare (ignore refine-result-id))
   (setf *crm-provider-script*
         (list (list :tool "refine-curiosity" arguments)))
@@ -2883,7 +2884,16 @@
     (declare (ignore sustain-result-id))
     (crm-check "result review can refine into one sharper durable question"
                (and (string= "refined" (gethash "disposition" refined))
-                    (stringp new-motive-id)))
+                    (stringp new-motive-id)
+                    (find-if
+                     (lambda (event)
+                       (let ((payload (gethash "payload" event)))
+                         (and (string= "conscious-curiosity-observed"
+                                       (gethash "type" event ""))
+                              (= 538
+                                 (length
+                                  (gethash "subject_label" payload ""))))))
+                     *crm-events*)))
     (setf *crm-provider-script*
           (list (list :tool "sustain-curiosity" sustain-arguments)))
     (let ((sustained (conscious-recursive-curiosity-result-review-one)))
