@@ -40,10 +40,11 @@ installed outside `PATH`; invoke it explicitly as:
   it, or create an appropriately scoped issue. Record important progress,
   decisions, rejected alternatives, blockers, and qualification gaps with
   `comment`. Use dependencies instead of informal ordering notes.
-- Beadwork state is publishable Git state. Keep real operator identities,
-  credentials, captured conversations, private runtime data, and private paths
-  out of issue titles, descriptions, comments, and attachments. Use synthetic
-  or content-free references where evidence is sensitive.
+- Beadwork is local-only private Git state. Never run `bw sync`, push the
+  `beadwork` branch, or configure a Beadwork remote; doing so would publish the
+  ledger through the source repository. Private operational context may be
+  recorded when it materially helps diagnosis, but minimize it and never store
+  credentials, authentication material, or unrelated personal data there.
 - Keep the canonical `Z:\dev\paiProject` checkout for integration,
   qualification, and release work. For isolated implementation, create Git
   worktrees below `Z:\dev\pai-worktrees\`, named `<issue-id>-<short-slug>`,
@@ -51,8 +52,9 @@ installed outside `PATH`; invoke it explicitly as:
   inside another checkout.
 - A source task is complete only after its required qualification evidence is
   recorded on the issue. Commit the source change, close the issue with a useful
-  reason, and run `sync`. Do not treat Beadwork state as a substitute for source
-  commits, tests, or the publication gates above.
+  reason, and leave the local ledger committed by Beadwork. Do not run `sync`.
+  Do not treat Beadwork state as a substitute for source commits, tests, or the
+  publication gates above.
 
 ### Aria and Angel workflow
 
@@ -63,12 +65,14 @@ issue authority.
 
 When a problem is first observed in Aria or Angel:
 
-1. Create or update an issue in the canonical ledger. Record only sanitized,
+1. Create or update an issue in the canonical local ledger. Prefer compact,
    content-free evidence such as event IDs, timestamps, error classes, affected
-   subsystem, model/profile name, and reproducible behavior. Use labels such as
-   `found-by:aria`, `found-by:angel`, `area:runtime`, or `area:provider` when
-   useful. Do not paste private prompts, responses, logs, credentials, or user
-   data into Beadwork.
+   subsystem, model/profile name, and reproducible behavior. Private prompts,
+   responses, log excerpts, or user context may be included when necessary to
+   preserve the diagnosis because this ledger must remain local-only. Minimize
+   copied content and never include credentials or authentication material. Use
+   labels such as `found-by:aria`, `found-by:angel`, `area:runtime`, or
+   `area:provider` when useful.
 2. Record the deployment checkout's commit, branch, dirty-file list, relevant
    durable settings, and the bounded log/event window before experimenting.
    Preserve unrelated local changes and distinguish pre-existing drift from the
